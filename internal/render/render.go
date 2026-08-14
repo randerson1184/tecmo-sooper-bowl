@@ -168,13 +168,13 @@ func DrawBall(dst *ebiten.Image, cam *Camera, p field.Pos) {
 }
 
 // DrawHUD prints score, down/distance, stamina, tips.
-func DrawHUD(dst *ebiten.Image, m *game.Match, selected playbook.Play, def playbook.DefenseCall, tip, phase string, stamina float64, jukeCD float64) {
+func DrawHUD(dst *ebiten.Image, m *game.Match, selected playbook.Play, def playbook.DefenseCall, shell playbook.CoverageShell, tip, phase string, stamina float64, jukeCD float64) {
 	line1 := fmt.Sprintf("TECMO SOOPER BOWL  |  HOME %d  AWAY %d  |  Q%d  %d:%02d  |  %s",
 		m.HomeScore, m.AwayScore, m.Quarter, m.ClockSec/60, m.ClockSec%60, phase)
 	line2 := fmt.Sprintf("Ball on %.0f  |  %d & %.0f  |  PlayClock %d",
 		m.BallY, m.Down, m.Distance, m.PlayClock)
-	line3 := fmt.Sprintf("OFF: [%s]  DEF: [%s]  |  STAMINA %s  JUKE %s",
-		selected.Name, def.Name, staminaBar(stamina), jukeReady(jukeCD))
+	line3 := fmt.Sprintf("OFF: [%s]  DEF: [%s / %s]  |  STAMINA %s  JUKE %s",
+		selected.Name, def.Name, shell.Name, staminaBar(stamina), jukeReady(jukeCD))
 	line4 := "1-4 play  SPACE snap/throw  Arrows move  SHIFT juke  R reset"
 	if tip != "" {
 		line4 = tip

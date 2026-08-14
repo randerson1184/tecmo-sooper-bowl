@@ -38,9 +38,12 @@ type App struct {
 	match    *game.Match
 	world    *sim.World
 	play     *sim.PlayState
-	offense  []playbook.Play
-	selected int
+	slots    []playbook.Slot
+	slotI    int
+	varI     int
+	offense  []playbook.Play // flat list (tests / fallback)
 	defense  playbook.DefenseCall
+	shell    playbook.CoverageShell
 	tracker  *ai.Tracker
 	fatigue  sim.Fatigue
 	rng      *rand.Rand
@@ -54,7 +57,9 @@ type App struct {
 	snapDist float64
 	snapBall float64
 	snapDef  playbook.DefenseCall
+	snapShell playbook.CoverageShell
 	snapPlay playbook.Play
+	snapSit  game.SituationClass
 
 	deadBallTimer float64
 	loggedPlay    bool // true once this dead-ball result has been written
@@ -69,8 +74,9 @@ func newApp() *App {
 	}
 	a := &App{
 		match:   game.NewMatch(),
+		slots:   playbook.PlaySlots(),
 		offense: playbook.DefaultOffense(),
-		tracker: ai.NewTracker(16),
+		tracker: ai.NewTracker(12),
 		rng:     rng,
 		plays:   logger,
 		layout: render.Layout{
@@ -82,11 +88,12 @@ func newApp() *App {
 		},
 		cam: render.NewCamera(),
 	}
-	a.selected = 0
+	a.slotI = 0
+	a.varI = 0
 	a.repickDefense()
 	a.world = sim.PlacePreSnap(a.match.LineOfScrimmage)
 	a.cam.Snap(field.Pos{X: field.HashMid, Y: a.match.LineOfScrimmage}, render.ScaleSelect)
-	a.tip = "1-4 play · SPACE snap · Arrows · SHIFT juke · T log summary · R reset"
+	a.tip = "1-4 slot · SHIFT+3 hitch · SPACE snap · Arrows · T log · R reset"
 	if a.plays != nil && a.plays.Path() != "" {
 		log.Printf("play log → %s", a.plays.Path())
 	}
@@ -94,7 +101,49 @@ func newApp() *App {
 }
 
 func (a *App) repickDefense() {
-	a.defense = ai.ChooseDefense(a.match.Situation(), a.tracker.Snapshot(), a.rng)
+	pkg := ai.ChoosePackage(a.match.Situation(), a.tracker.Snapshot(), a.rng)
+	a.defense = pkg.Front
+	a.shell = pkg.Shell
+}
+
+func (a *App) defLabel() string {
+	return playbook.Package{Front: a.defense, Shell: a.shell}.String()
+}
+
+func (a *App) currentPlay() playbook.Play {
+	if a.slotI < 0 || a.slotI >= len(a.slots) {
+		return playbook.DefaultOffense()[0]
+	}
+	plays := a.slots[a.slotI].Plays
+	if len(plays) == 0 {
+		return playbook.DefaultOffense()[0]
+	}
+	i := a.varI
+	if i < 0 || i >= len(plays) {
+		i = 0
+	}
+	return plays[i]
+}
+
+func (a *App) selectedLabel() string {
+	if a.slotI < 0 || a.slotI >= len(a.slots) {
+		return a.currentPlay().Name
+	}
+	s := a.slots[a.slotI]
+	return fmt.Sprintf("%s · %s", s.Name, a.currentPlay().Name)
+}
+
+func (a *App) lineCtx() sim.LineContext {
+	snap := a.tracker.Snapshot()
+	return sim.LineContext{
+		ObviousPass: a.match.LongDown(),
+		RunThreat:   snap.RunThreat,
+		PassThreat:  snap.PassThreat,
+		RunPct:      snap.RunPct,
+		PassPct:     snap.PassPct,
+		KeepThreat:  snap.KeepThreat,
+		Samples:     snap.Samples,
+	}
 }
 
 func (a *App) Update() error {
@@ -186,12 +235,28 @@ func (a *App) updateLiveCamera() {
 }
 
 func (a *App) updatePreSnap() {
+	shift := ebiten.IsKeyPressed(ebiten.KeyShift) || ebiten.IsKeyPressed(ebiten.KeyShiftLeft)
 	for i, key := range []ebiten.Key{ebiten.Key1, ebiten.Key2, ebiten.Key3, ebiten.Key4} {
-		if inpututil.IsKeyJustPressed(key) && i < len(a.offense) {
-			a.selected = i
-			p := a.offense[i]
-			a.tip = fmt.Sprintf("Selected: %s — %s (D: %s)", p.Name, p.Description, a.defense.Name)
+		if !inpututil.IsKeyJustPressed(key) || i >= len(a.slots) {
+			continue
 		}
+		plays := a.slots[i].Plays
+		if len(plays) == 0 {
+			continue
+		}
+		if shift && len(plays) > 1 {
+			if a.slotI == i {
+				a.varI = (a.varI + 1) % len(plays)
+			} else {
+				a.slotI = i
+				a.varI = 1 % len(plays)
+			}
+		} else {
+			a.slotI = i
+			a.varI = 0
+		}
+		p := a.currentPlay()
+		a.tip = fmt.Sprintf("Selected: %s — %s (D: %s)", a.selectedLabel(), p.Description, a.defLabel())
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
 		a.snap()
@@ -199,31 +264,19 @@ func (a *App) updatePreSnap() {
 }
 
 func (a *App) snap() {
-	p := a.offense[a.selected]
+	p := a.currentPlay()
 
 	// Freeze pre-snap context for the play log
 	a.snapDown = a.match.Down
 	a.snapDist = a.match.Distance
 	a.snapBall = a.match.BallY
 	a.snapDef = a.defense
+	a.snapShell = a.shell
 	a.snapPlay = p
+	a.snapSit = a.match.Situation()
 	a.loggedPlay = false
 
-	depth := 0
-	switch p.DepthLabel {
-	case "intermediate":
-		depth = 1
-	case "deep":
-		depth = 2
-	}
-	a.tracker.Observe(ai.PlayObservation{
-		Type:      p.Type,
-		Side:      p.Side,
-		Depth:     depth,
-		Situation: a.match.Situation(),
-	})
-
-	a.play = sim.StartPlay(a.match.LineOfScrimmage, p, a.defense, a.rng, a.fatigue)
+	a.play = sim.StartSnap(a.match.LineOfScrimmage, p, a.defense, a.shell, a.rng, a.fatigue, a.lineCtx())
 	a.world = a.play.World
 	a.match.Phase = game.PhaseInPlay
 	a.cam.SetTarget(a.world.Ball, render.ScaleLive)
@@ -280,7 +333,7 @@ func (a *App) updateInPlay(dt float64) {
 			role := a.world.Units[idx].Role
 			stam = a.fatigue.Display(role)
 			a.tip = fmt.Sprintf("LIVE  %.0f yd line  (%+.1f)  D:%s  STA %d%%",
-				y, gained, a.defense.Name, int(stam*100))
+				y, gained, a.defLabel(), int(stam*100))
 			if a.play.Play.Type == playbook.PlayPass && a.play.ControlIdx == a.play.QBIdx {
 				a.tip += "  SPACE throw"
 			}
@@ -326,9 +379,6 @@ func (a *App) beginDeadBall() {
 	}
 	a.fatigue.OnPlayEnd(role, r.YardsGained, wasPass, incomplete)
 
-	tend := a.tracker.Snapshot()
-	a.recordPlay(r, tend)
-
 	a.tip = fmt.Sprintf("%s  |  %+.1f yds  |  STA %d%%  |  was %s",
 		r.Message, r.YardsGained, int(a.fatigue.Display(sim.RoleRB)*100), a.snapDef.Name)
 }
@@ -338,39 +388,24 @@ func (a *App) recordPlay(r sim.Result, tend ai.Snapshot) {
 		return
 	}
 	a.loggedPlay = true
-	// After-result ball/down estimated from result (match not updated yet)
-	ballAfter := r.BallY
-	downAfter := a.snapDown
-	distAfter := a.snapDist
-	if r.Outcome == sim.OutcomeIncomplete {
-		downAfter = a.snapDown + 1
-	} else if r.Outcome == sim.OutcomeTouchdown {
-		ballAfter = 100
-	} else {
-		distAfter = a.snapDist - r.YardsGained
-		if distAfter <= 0 {
-			downAfter = 1
-			distAfter = 10
-		} else {
-			downAfter = a.snapDown + 1
-		}
-	}
 	e := logplay.Entry{
 		OffPlay:    a.snapPlay.ID,
 		OffName:    a.snapPlay.Name,
 		DefCall:    a.snapDef.ID,
+		Shell:      a.snapShell.ID,
 		Outcome:    r.Outcome.String(),
 		Yards:      r.YardsGained,
 		DownBefore: a.snapDown,
 		DistBefore: a.snapDist,
 		BallBefore: a.snapBall,
-		DownAfter:  downAfter,
-		DistAfter:  distAfter,
-		BallAfter:  ballAfter,
+		DownAfter:  a.match.Down,
+		DistAfter:  a.match.Distance,
+		BallAfter:  a.match.BallY,
 		RunPct:     tend.RunPct,
 		PassPct:    tend.PassPct,
 		RightPct:   tend.RightPct,
 		Stamina:    a.fatigue.Display(sim.RoleRB),
+		QBKeep:     a.play != nil && a.play.QBKeep,
 		Message:    r.Message,
 	}
 	a.plays.Record(e)
@@ -385,6 +420,23 @@ func (a *App) finishDeadBall() {
 	td := r.Outcome == sim.OutcomeTouchdown
 
 	a.match.ApplyPlayResult(r.BallY, r.YardsGained, incomplete, td)
+	depth := 0
+	switch a.snapPlay.DepthLabel {
+	case "intermediate":
+		depth = 1
+	case "deep":
+		depth = 2
+	}
+	a.tracker.Observe(ai.PlayObservation{
+		Type:      a.snapPlay.Type,
+		Side:      a.snapPlay.Side,
+		Depth:     depth,
+		Situation: a.snapSit,
+		Yards:     r.YardsGained,
+		Outcome:   r.Outcome.String(),
+		QBKeep:    a.play != nil && a.play.QBKeep,
+	})
+	a.recordPlay(r, a.tracker.Snapshot())
 
 	if a.match.Phase == game.PhaseScore {
 		a.tip = fmt.Sprintf("TOUCHDOWN! Home %d — next drive loading…", a.match.HomeScore)
@@ -399,7 +451,7 @@ func (a *App) finishDeadBall() {
 	a.match.Phase = game.PhasePlaySelect
 	snap := a.tracker.Snapshot()
 	a.tip = fmt.Sprintf("%s (%.1f yds) → %d & %.0f | D [%s] | run %.0f%% | STA %d%%",
-		r.Message, r.YardsGained, a.match.Down, a.match.Distance, a.defense.Name,
+		r.Message, r.YardsGained, a.match.Down, a.match.Distance, a.defLabel(),
 		snap.RunPct*100, int(a.fatigue.Display(sim.RoleRB)*100))
 }
 
@@ -431,7 +483,9 @@ func (a *App) Draw(screen *ebiten.Image) {
 			stam = a.fatigue.Display(a.world.Units[idx].Role)
 		}
 	}
-	render.DrawHUD(screen, a.match, a.offense[a.selected], a.defense, a.tip, phase, stam, jukeCD)
+	shown := a.currentPlay()
+	shown.Name = a.selectedLabel()
+	render.DrawHUD(screen, a.match, shown, a.defense, a.shell, a.tip, phase, stam, jukeCD)
 }
 
 func (a *App) Layout(outsideWidth, outsideHeight int) (int, int) {

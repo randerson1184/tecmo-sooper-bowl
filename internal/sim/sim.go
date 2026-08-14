@@ -50,6 +50,17 @@ type Unit struct {
 	BlockTarget int
 	// Engaged > 0: this defender is currently sealed / driven (seconds remaining feel via decay).
 	Engaged float64
+	// RushFree: blitz LB who must not be claimed by an OL.
+	RushFree bool
+	// ContainEdge: this defender sets the alley on stretch (every front gets one).
+	ContainEdge bool
+	// Spy: hole player vs QB keep. Does not drop into coverage.
+	Spy bool
+
+	// Coverage assignment (defenders only). Landmark + optional man.
+	CoverJob  CoverJob
+	CoverLand field.Pos
+	CoverMan  int // unit index; -1 if zone
 }
 
 // World is the in-play simulation snapshot.
@@ -91,6 +102,7 @@ func PlacePreSnap(losY float64) *World {
 			BaseSpeed:   sp,
 			Speed:       sp,
 			BlockTarget: -1,
+			CoverMan:    -1,
 		})
 		id++
 	}
@@ -121,6 +133,7 @@ func PlacePreSnap(losY float64) *World {
 			BaseSpeed:   sp,
 			Speed:       sp,
 			BlockTarget: -1,
+			CoverMan:    -1,
 		})
 		id++
 	}

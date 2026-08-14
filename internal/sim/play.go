@@ -52,6 +52,8 @@ type PlayState struct {
 	World *World
 	Play  playbook.Play
 	Def   playbook.DefenseCall
+	Shell playbook.CoverageShell
+	Line  LineContext
 	LOS   float64
 
 	// Player-controlled unit index into World.Units (-1 if none).
@@ -69,12 +71,23 @@ type PlayState struct {
 	BallVelX    float64
 	BallVelY    float64
 	BallTarget  int // unit index expected to catch; -1 none
-	ThrowTimer  float64
+	// ThrowTimer is seconds the ball has been in the air (0 at release).
+	ThrowTimer float64
+	// ThrowFlight is expected hang time at release (distance / ball speed).
+	ThrowFlight float64
 	HandoffDone bool
 	HandoffAt   float64 // seconds after snap
 
 	// Juke cooldown remaining (seconds).
 	JukeCooldown float64
+	// Seconds of "gather" after a hitch catch — WR is not a jet off the stop.
+	HitchGather float64
+	// Elapsed at catch (0 if still in the air / no catch).
+	CaughtAt float64
+	// Remaining pass-pro budget (seconds). Hits zero → rushers shed.
+	PocketLeft float64
+	Thrown     bool // a pass left the QB's hand
+	QBKeep     bool // declared keep / scramble (defense plays the run)
 
 	Elapsed float64
 	Alive   bool
@@ -113,16 +126,26 @@ func roleSpeed(r Role) float64 {
 }
 
 // StartPlay places the world and configures handoff / routes from the called play + defense.
-// fat applies drive fatigue to offense skill speeds.
+// fat applies drive fatigue to offense skill speeds. Default shell is Cover 3.
 func StartPlay(los float64, play playbook.Play, def playbook.DefenseCall, rng *rand.Rand, fat Fatigue) *PlayState {
+	return StartSnap(los, play, def, playbook.DefaultShell(), rng, fat, LineContext{})
+}
+
+// StartSnap is StartPlay with an explicit coverage shell (front and shell are independent).
+func StartSnap(los float64, play playbook.Play, def playbook.DefenseCall, shell playbook.CoverageShell, rng *rand.Rand, fat Fatigue, line LineContext) *PlayState {
 	if rng == nil {
 		rng = rand.New(rand.NewSource(1))
+	}
+	if shell.ID == "" {
+		shell = playbook.DefaultShell()
 	}
 	w := PlacePreSnap(los)
 	ps := &PlayState{
 		World:      w,
 		Play:       play,
 		Def:        def,
+		Shell:      shell,
+		Line:       line,
 		LOS:        los,
 		ControlIdx: -1,
 		PrimaryIdx: -1,
@@ -132,6 +155,7 @@ func StartPlay(los float64, play playbook.Play, def playbook.DefenseCall, rng *r
 		Alive:      true,
 		rng:        rng,
 		HandoffAt:  0.30,
+		PocketLeft: line.holdSeconds(def.ID),
 	}
 	// Toss sweep is a quick pitch
 	if play.ID == "sweep" {
@@ -188,32 +212,33 @@ func StartPlay(los float64, play playbook.Play, def playbook.DefenseCall, rng *r
 			w.Units[ps.RBIdx].Pos.X += 3.5
 			w.Units[ps.RBIdx].Pos = field.Clamp(w.Units[ps.RBIdx].Pos)
 		}
-		// Run Fit: stack the edge — no free outside
-		edge := 1.0
+		// Do not widen light boxes — that was the free alley. Pinch only on Run Fit.
 		if def.ID == "run_fit" {
-			edge = -0.5 // actually pinching
-		} else if def.ID == "soft_zone" || def.ID == "pass_rush" {
-			edge = 1.8 // still punish light boxes
-		}
-		for i := range w.Units {
-			u := &w.Units[i]
-			if u.Side != SideDefense || u.Pos.X <= field.HashMid {
-				continue
-			}
-			if u.Role == RoleDL || u.Role == RoleLB || u.Role == RoleCB {
-				u.Pos.X += edge
-				if def.ID == "run_fit" && (u.Role == RoleLB || u.Role == RoleCB) {
-					u.Pos.Y -= 0.5 // step up
-					u.Speed *= 1.08
-					u.BaseSpeed = u.Speed
+			for i := range w.Units {
+				u := &w.Units[i]
+				if u.Side != SideDefense || u.Pos.X <= field.HashMid {
+					continue
 				}
-				u.Pos = field.Clamp(u.Pos)
+				if u.Role == RoleDL || u.Role == RoleLB || u.Role == RoleCB {
+					u.Pos.X -= 0.5
+					if u.Role == RoleLB || u.Role == RoleCB {
+						u.Pos.Y -= 0.5
+						u.Speed *= 1.08
+						u.BaseSpeed = u.Speed
+					}
+					u.Pos = field.Clamp(u.Pos)
+				}
 			}
 		}
 	}
 
 	// Assign primary receiver: first WR matching play side preference.
 	ps.PrimaryIdx = pickPrimary(w, play)
+	AssignCoverage(w, shell, los, ps.PrimaryIdx)
+	if play.Type == playbook.PlayPass {
+		assignPassPro(w, def)
+		assignQBSpy(w, los, def, line)
+	}
 
 	if play.Type == playbook.PlayRun {
 		// Ball starts with QB until handoff
@@ -232,9 +257,13 @@ func StartPlay(los float64, play playbook.Play, def playbook.DefenseCall, rng *r
 	assignRoutes(w, play, los, ps.PrimaryIdx)
 	if play.Type == playbook.PlayRun {
 		assignRunBlocks(w, play, los)
-		// Run Fit vs stretch: keep a free playside LB in the alley (classic "load the edge")
-		if play.ID == "sweep" && def.ID == "run_fit" {
-			freePlaysideLB(w)
+		// Every front sets an edge on stretch. Run Fit is stronger, not unique.
+		if play.ID == "sweep" {
+			setSweepContain(w, def, shell)
+		}
+		// Run Fit vs inside zone: unblocked MLB in the A-gap.
+		if play.ID == "inside_zone" && def.ID == "run_fit" {
+			freeMiddleLB(w)
 		}
 		// Snap blockers partway toward their man (less teleport against loaded boxes)
 		snapClose := 0.35
@@ -242,6 +271,14 @@ func StartPlay(los float64, play playbook.Play, def playbook.DefenseCall, rng *r
 		if play.ID == "sweep" && def.ID == "run_fit" {
 			snapClose = 0.15
 			eng = 0.12
+		}
+		if play.ID == "inside_zone" && def.ID != "run_fit" {
+			snapClose = 0.48
+			eng = 0.5
+		}
+		if play.ID == "inside_zone" && def.ID == "run_fit" {
+			snapClose = 0.2
+			eng = 0.18
 		}
 		for i := range w.Units {
 			u := &w.Units[i]
@@ -347,9 +384,13 @@ func assignRunBlocks(w *World, play playbook.Play, los float64) {
 		}
 	}
 
-	// Inside zone: center + guards double A-gap DTs (first two DL)
-	if play.ID == "inside_zone" && len(oline) >= 3 && len(front) >= 2 {
-		// Center (middle) and right guard both on first DT; left guard on second — crude doubles
+	// Inside zone: combo the interior DTs so the A-gap isn't two free 1-techs.
+	if play.ID == "inside_zone" && len(oline) >= 5 && len(front) >= 4 {
+		// LT, LG, C, RG, RT — LG+C on LDT, RG on RDT (RT/LT keep ends)
+		w.Units[oline[1]].BlockTarget = front[1]
+		w.Units[oline[2]].BlockTarget = front[1]
+		w.Units[oline[3]].BlockTarget = front[2]
+	} else if play.ID == "inside_zone" && len(oline) >= 3 && len(front) >= 2 {
 		mid := len(oline) / 2
 		w.Units[oline[mid]].BlockTarget = front[len(front)/2]
 		if mid > 0 {
@@ -360,30 +401,143 @@ func assignRunBlocks(w *World, play playbook.Play, los float64) {
 	_ = los
 }
 
-// freePlaysideLB clears blocks on the rightmost LB so Run Fit has a free hitter on sweeps.
-func freePlaysideLB(w *World) {
-	rightLB := -1
-	bestX := -1.0
-	for i, u := range w.Units {
-		if u.Side == SideDefense && u.Role == RoleLB && u.Pos.X > bestX {
-			bestX = u.Pos.X
-			rightLB = i
-		}
+// setSweepContain puts one unblocked defender in the right alley on every front.
+// Run Fit is a loaded edge; Base/Blitz still set it; light boxes set it later/wider.
+func setSweepContain(w *World, def playbook.DefenseCall, shell playbook.CoverageShell) {
+	idx := -1
+	if shell.ID == playbook.ShellCover2 {
+		idx = pickCover2EdgeForce(w)
 	}
-	if rightLB < 0 {
+	if idx < 0 {
+		idx = pickSweepContain(w, def)
+	}
+	if idx < 0 {
 		return
 	}
 	for i := range w.Units {
-		if w.Units[i].BlockTarget == rightLB {
+		if w.Units[i].BlockTarget == idx {
+			w.Units[i].BlockTarget = -1
+		}
+		w.Units[i].ContainEdge = false
+	}
+	u := &w.Units[idx]
+	u.ContainEdge = true
+	u.Engaged = 0
+
+	alley := 17.5
+	step := 0.15
+	spd := 1.02
+	switch def.ID {
+	case "run_fit":
+		alley, step, spd = 12.0, 1.0, 1.14
+	case "blitz":
+		alley, step, spd = 16.0, 0.3, 1.05
+	case "pass_rush", "soft_zone":
+		// Light box, not a vacant alley: wider than Run Fit, still forces inside.
+		alley, step, spd = 15.5, -0.2, 1.07
+	}
+	// Cover 2 squat corners must still force the stretch inside, even in a light box.
+	if shell.ID == playbook.ShellCover2 {
+		alley = 13.5
+		step = -0.4 // step up toward the LOS and force inside
+		if spd < 1.12 {
+			spd = 1.12
+		}
+		if def.ID == "run_fit" {
+			alley = 12.0
+		}
+	}
+	u.Pos.X = field.HashMid + alley
+	u.Pos.Y += step
+	u.Speed *= spd
+	u.BaseSpeed = u.Speed
+	u.Pos = field.Clamp(u.Pos)
+}
+
+func pickCover2EdgeForce(w *World) int {
+	// Playside (right) flat corner — already in the alley if C2 is aligned.
+	best := -1
+	bestX := field.HashMid
+	for i, u := range w.Units {
+		if u.Side != SideDefense || u.Role != RoleCB {
+			continue
+		}
+		if u.CoverJob != CoverFlatR && u.CoverJob != CoverFlatL {
+			continue
+		}
+		if u.Pos.X > bestX {
+			bestX = u.Pos.X
+			best = i
+		}
+	}
+	return best
+}
+
+func pickSweepContain(w *World, def playbook.DefenseCall) int {
+	// Prefer playside LB, then playside DE, then playside CB, then safety.
+	prefer := []Role{RoleLB, RoleDL, RoleCB, RoleS}
+	if def.ID == "pass_rush" || def.ID == "soft_zone" {
+		prefer = []Role{RoleCB, RoleS, RoleLB, RoleDL}
+	}
+	for _, role := range prefer {
+		best := -1
+		bestX := field.HashMid
+		for i, u := range w.Units {
+			if u.Side != SideDefense || u.Role != role {
+				continue
+			}
+			if u.Pos.X <= bestX {
+				continue
+			}
+			bestX = u.Pos.X
+			best = i
+		}
+		if best >= 0 {
+			return best
+		}
+	}
+	return -1
+}
+
+func SweepContainIndex(w *World) int {
+	if w == nil {
+		return -1
+	}
+	for i, u := range w.Units {
+		if u.ContainEdge {
+			return i
+		}
+	}
+	return -1
+}
+
+// freeMiddleLB leaves the Mike unblocked so Run Fit can stuff the A-gap.
+func freeMiddleLB(w *World) {
+	midLB := -1
+	best := 1e9
+	for i, u := range w.Units {
+		if u.Side != SideDefense || u.Role != RoleLB {
+			continue
+		}
+		d := math.Abs(u.Pos.X - field.HashMid)
+		if d < best {
+			best = d
+			midLB = i
+		}
+	}
+	if midLB < 0 {
+		return
+	}
+	for i := range w.Units {
+		if w.Units[i].BlockTarget == midLB {
 			w.Units[i].BlockTarget = -1
 		}
 	}
-	// Align free hitter in the alley
-	w.Units[rightLB].Pos.X = field.HashMid + 12
-	w.Units[rightLB].Pos.Y += 1
-	w.Units[rightLB].Engaged = 0
-	w.Units[rightLB].Speed *= 1.12
-	w.Units[rightLB].BaseSpeed = w.Units[rightLB].Speed
+	w.Units[midLB].Pos.X = field.HashMid
+	w.Units[midLB].Pos.Y += 0.4
+	w.Units[midLB].Engaged = 0
+	w.Units[midLB].Speed *= 1.14
+	w.Units[midLB].BaseSpeed = w.Units[midLB].Speed
 }
 
 func sortByX(w *World, idxs []int) {
@@ -424,6 +578,20 @@ func pickPrimary(w *World, play playbook.Play) int {
 	return best
 }
 
+func conceptRoute(u *Unit, isPrimary bool, los float64, c playbook.Concept) (tx, ty float64) {
+	tx, ty = u.Pos.X, los+c.PrimaryDepth
+	if !isPrimary {
+		// Clear-out vertical so the post has air.
+		return u.Pos.X, los + c.PrimaryDepth + 6
+	}
+	switch c.PrimaryBreak {
+	case "post":
+		return field.HashMid, los + c.PrimaryDepth
+	default:
+		return tx, ty
+	}
+}
+
 func assignRoutes(w *World, play playbook.Play, los float64, primaryIdx int) {
 	for i := range w.Units {
 		u := &w.Units[i]
@@ -435,6 +603,9 @@ func assignRoutes(w *World, play playbook.Play, los float64, primaryIdx int) {
 		case RoleWR, RoleTE:
 			tx, ty := u.Pos.X, los+8
 			if play.Type == playbook.PlayPass {
+				if c, ok := playbook.ConceptFor(play.ID); ok {
+					tx, ty = conceptRoute(u, isPrimary, los, c)
+				} else {
 				switch play.ID {
 				case "slant":
 					// Primary: clear inside stem — 4 yards up, then cut hard to hash
@@ -460,6 +631,7 @@ func assignRoutes(w *World, play playbook.Play, los float64, primaryIdx int) {
 					}
 				default:
 					ty = los + 10
+				}
 				}
 			} else if play.ID == "sweep" && u.Pos.X > field.HashMid {
 				// Crack / seal down block path
@@ -502,9 +674,10 @@ func assignRoutes(w *World, play playbook.Play, los float64, primaryIdx int) {
 			u.HasTarget = true
 		case RoleQB:
 			if play.Type == playbook.PlayPass {
-				// Quick game: shallow drop (slant/hitch), not a 7-step
 				drop := 2.5
-				if play.ID == "slant" || play.ID == "hitch" {
+				if c, ok := playbook.ConceptFor(play.ID); ok && c.DropYards > 0 {
+					drop = c.DropYards
+				} else if play.ID == "slant" || play.ID == "hitch" {
 					drop = 1.5
 				}
 				u.Target = field.Pos{X: u.Pos.X, Y: los - drop}
@@ -544,6 +717,12 @@ func (ps *PlayState) Tick(dt float64, in Input) bool {
 		ps.JukeCooldown -= dt
 		if ps.JukeCooldown < 0 {
 			ps.JukeCooldown = 0
+		}
+	}
+	if ps.HitchGather > 0 {
+		ps.HitchGather -= dt
+		if ps.HitchGather < 0 {
+			ps.HitchGather = 0
 		}
 	}
 	for i := range w.Units {
@@ -596,6 +775,9 @@ func (ps *PlayState) Tick(dt float64, in Input) bool {
 				if ctrl.JukeTimer > 0 {
 					speed *= 1.15
 				}
+				if ps.HitchGather > 0 && ctrl.Role == RoleWR {
+					speed *= 0.68 // plant and turn, not a free burst
+				}
 				ix, iy := in.DX, in.DY
 				if mag := math.Hypot(ix, iy); mag > 1 {
 					ix /= mag
@@ -641,18 +823,21 @@ func (ps *PlayState) Tick(dt float64, in Input) bool {
 		}
 	}
 
-	// Throw request
-	if in.Throw && ps.Play.Type == playbook.PlayPass && !ps.BallInAir && ps.ControlIdx == ps.QBIdx {
+	// Throw request — once he crosses and it's a keep, the ball is live as a run.
+	if in.Throw && ps.Play.Type == playbook.PlayPass && !ps.BallInAir &&
+		ps.ControlIdx == ps.QBIdx && !ps.QBKeep {
 		ps.tryThrow()
 	}
+	ps.declareKeep()
 
 	// Move ball in air
 	if ps.BallInAir {
+		ps.ThrowTimer += dt
 		ps.BallPos.X += ps.BallVelX * dt
 		ps.BallPos.Y += ps.BallVelY * dt
 		w.Ball = ps.BallPos
 		// Catch / incomplete check near target
-		ps.checkPassArrival()
+		ps.checkPassArrival(dt)
 	}
 
 	// AI for all non-controlled units
@@ -739,6 +924,9 @@ func (ps *PlayState) tryThrow() {
 			if ps.Play.ID == "slant" {
 				lead = 0.55
 			}
+			if ps.Play.DepthLabel == "intermediate" {
+				lead = 0.7
+			}
 			aim.X = recv.Pos.X + (tdx/tdist)*recv.Speed*lead
 			aim.Y = recv.Pos.Y + (tdy/tdist)*recv.Speed*lead
 		}
@@ -761,10 +949,12 @@ func (ps *PlayState) tryThrow() {
 	ps.BallTarget = ps.PrimaryIdx
 	ps.World.Units[ps.QBIdx].HasBall = false
 	ps.ControlIdx = -1 // watching ball
-	ps.ThrowTimer = dist / ballSpeed
+	ps.ThrowTimer = 0
+	ps.ThrowFlight = dist / ballSpeed
+	ps.Thrown = true
 }
 
-func (ps *PlayState) checkPassArrival() {
+func (ps *PlayState) checkPassArrival(dt float64) {
 	if ps.BallTarget < 0 {
 		ps.endIncomplete("Throw away / no target")
 		return
@@ -777,9 +967,13 @@ func (ps *PlayState) checkPassArrival() {
 		hy := recv.Pos.Y - ps.BallPos.Y
 		hd := math.Hypot(hx, hy)
 		if hd > 0.2 && hd < 14 {
-			const dt = 1.0 / 60.0
-			pull := 28.0 // yards/sec² toward receiver
-			ps.BallVelX += (hx / hd) * pull * dt * 60 // per-tick accel scaled
+			if dt < 0 {
+				dt = 0
+			}
+			// pull is tuned as "per 60 Hz tick"; scale by real dt so 30/120 FPS
+			// match the same arcade curve instead of a hardcoded 1/60 step.
+			pull := 28.0
+			ps.BallVelX += (hx / hd) * pull * dt * 60
 			ps.BallVelY += (hy / hd) * pull * dt * 60
 			spd := math.Hypot(ps.BallVelX, ps.BallVelY)
 			maxSpd := 42.0
@@ -811,23 +1005,51 @@ func (ps *PlayState) checkPassArrival() {
 	if ps.Play.ID == "slant" {
 		catchR = 2.4
 	}
+	if ps.Play.DepthLabel == "intermediate" {
+		catchR = 2.25
+	}
 	if dist < catchR {
 		pCatch := 0.94
 		if contested {
 			pCatch = 0.58
 		}
-		// Soft zone gives underneath completions
-		if ps.Def.ID == "soft_zone" && !contested {
-			pCatch = 0.98
+		switch ps.Shell.ID {
+		case playbook.ShellCover2:
+			if ps.Play.ID == "hitch" {
+				pCatch -= 0.16 // squat corners contest the out
+			}
+			if ps.Play.ID == "slant" && !contested {
+				pCatch += 0.04 // hole vs two-deep
+			}
+		case playbook.ShellCover3:
+			if ps.Play.ID == "hitch" && !contested {
+				pCatch += 0.03 // CBs bailed; hitch is the give
+			}
+		case playbook.ShellManFree:
+			if contested {
+				pCatch -= 0.08
+			} else if ps.Play.ID == "slant" {
+				pCatch -= 0.04 // tighter window if on time
+			}
 		}
-		if ps.Def.ID == "soft_zone" && contested {
-			pCatch = 0.7
+		if ps.Def.ID == "soft_zone" && !contested {
+			pCatch += 0.03
+		}
+		if pCatch < 0.35 {
+			pCatch = 0.35
+		}
+		if pCatch > 0.98 {
+			pCatch = 0.98
 		}
 		if ps.rng.Float64() < pCatch {
 			recv.HasBall = true
 			ps.BallInAir = false
 			ps.ControlIdx = ps.BallTarget
 			ps.BallTarget = -1
+			ps.CaughtAt = ps.Elapsed
+			if ps.Play.ID == "hitch" {
+				ps.HitchGather = 0.32
+			}
 		} else {
 			ps.endIncomplete("Broken up / incomplete")
 		}
@@ -839,7 +1061,8 @@ func (ps *PlayState) checkPassArrival() {
 		ps.endIncomplete("Incomplete (out of bounds)")
 		return
 	}
-	if ps.ThrowTimer > 0 && ps.Elapsed > ps.ThrowTimer+0.85 && dist > 8 {
+	// Hang-time budget is flight duration from release, not time since snap.
+	if ps.ThrowFlight > 0 && ps.ThrowTimer > ps.ThrowFlight+0.85 && dist > 8 {
 		ps.endIncomplete("Incomplete (overthrown)")
 	}
 }
@@ -885,11 +1108,13 @@ func (ps *PlayState) aiOffense(i int, dt float64) {
 				tpos.X += 1.5
 				tpos.Y += 0.5
 			} else if ps.Play.ID == "inside_zone" {
+				// Climb to the hole, not a lateral wash that fills it.
 				if tpos.X >= field.HashMid {
-					tpos.X += 1.5
+					tpos.X += 0.6
 				} else {
-					tpos.X -= 1.5
+					tpos.X -= 0.6
 				}
+				tpos.Y += 0.8
 			}
 			spd := u.Speed * 1.05
 			if u.Role == RoleWR {
@@ -935,23 +1160,7 @@ func (ps *PlayState) applyBlocks(dt float64) {
 	}
 
 	if ps.Play.Type != playbook.PlayRun {
-		// Pass pro: light chip only
-		for i := range ps.World.Units {
-			u := &ps.World.Units[i]
-			if u.Side != SideOffense || u.Role != RoleOL {
-				continue
-			}
-			nearest := ps.nearestDefender(u.Pos, RoleDL)
-			if nearest < 0 {
-				continue
-			}
-			d := &ps.World.Units[nearest]
-			if math.Hypot(d.Pos.X-u.Pos.X, d.Pos.Y-u.Pos.Y) < 2.2 {
-				d.VX *= 0.4
-				d.VY *= 0.4
-				d.Engaged = 0.15
-			}
-		}
+		ps.applyPassPro(dt)
 		return
 	}
 
@@ -982,6 +1191,18 @@ func (ps *PlayState) applyBlocks(dt float64) {
 			engageTime += 0.05
 		}
 	}
+	if ps.Play.ID == "inside_zone" {
+		if ps.Def.ID == "run_fit" {
+			push = 2.2
+			engageTime = 0.32
+			hold = 0.32
+		} else {
+			push += 1.15
+			engageTime += 0.16
+			hold *= 0.7
+		}
+	}
+	push += ps.Line.runPushBonus(ps.Def.ID)
 
 	for i := range ps.World.Units {
 		u := &ps.World.Units[i]
@@ -1035,12 +1256,13 @@ func (ps *PlayState) applyBlocks(dt float64) {
 				driveY = push * 0.3 // crack down
 			}
 		} else if ps.Play.ID == "inside_zone" {
+			// Vertical displacement first — open a crease, don't clog it.
 			if d.Pos.X >= field.HashMid {
-				driveX = push * 0.45
+				driveX = push * 0.18
 			} else {
-				driveX = -push * 0.45
+				driveX = -push * 0.18
 			}
-			driveY = push * 0.9
+			driveY = push * 1.15
 		}
 		// Double-team bonus: another blocker also close
 		for j := range ps.World.Units {
@@ -1077,60 +1299,91 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 		qbPos = ps.World.Units[ps.QBIdx].Pos
 	}
 
-	if ps.Play.Type == playbook.PlayPass && !ps.BallInAir && ps.ballCarrierIdx() == ps.QBIdx {
+	if ps.Play.Type == playbook.PlayPass && !ps.BallInAir && ps.ballCarrierIdx() == ps.QBIdx && !ps.QBKeep {
 		// Coverage vs rush
 		switch u.Role {
 		case RoleDL:
-			// Slightly delayed get-off so quick game can beat pure pressure
 			spd := u.Speed
-			if ps.Elapsed < 0.35 && (ps.Play.ID == "slant" || ps.Play.ID == "hitch") {
-				spd *= 0.7
+			delay := ps.Line.rushDelay(ps.Def.ID)
+			if ps.Elapsed < delay {
+				spd *= 0.22
 			}
-			moveToward(u, qbPos, spd)
+			if claimedRusher(ps.World, i) && u.Engaged > 0 {
+				spd *= 0.15
+			}
+			if ps.Elapsed > 0.95 && u.Engaged <= 0 {
+				spd *= 1.08
+			}
+			// Interior rushers squeeze the A-gap; they do not loop and vacate it.
+			aim := qbPos
+			if math.Abs(u.Pos.X-field.HashMid) < 7.5 {
+				aim.X = field.HashMid*0.55 + qbPos.X*0.45
+			}
+			moveToward(u, aim, spd)
 		case RoleLB:
-			if ps.Def.ID == "blitz" || ps.Def.ID == "pass_rush" {
-				moveToward(u, qbPos, u.Speed*0.95)
+			if u.Spy {
+				sit := field.Pos{X: field.HashMid, Y: ps.LOS + 4}
+				if ps.Line.KeepThreat >= 2 {
+					sit.Y = ps.LOS + 2.5
+				}
+				// Shadow the QB's hash; don't chase him into the backfield.
+				sit.X = qbPos.X*0.4 + field.HashMid*0.6
+				moveToward(u, sit, u.Speed*0.9)
+				return
+			}
+			if u.RushFree || (ps.Def.ID == "blitz" && u.RushFree) {
+				moveToward(u, qbPos, u.Speed*1.05)
+			} else if ps.Def.ID == "pass_rush" && ps.Elapsed > 0.55 {
+				// Delayed scrape, not a free extra rusher on every snap.
+				moveToward(u, qbPos, u.Speed*0.85)
+			} else if dest, spd, ok := ps.coverTarget(i); ok {
+				moveToward(u, dest, spd)
 			} else if ps.PrimaryIdx >= 0 {
-				// hook zone toward primary
 				t := ps.World.Units[ps.PrimaryIdx].Pos
 				t.Y = (t.Y + ps.LOS + 5) * 0.5
 				moveToward(u, t, u.Speed*0.8)
 			}
 		case RoleCB, RoleS:
-			// Cover nearest WR in their half; CBs give a cushion early on short routes
-			target := ps.nearestOffense(u.Pos, RoleWR, RoleTE)
-			// Prefer matching primary if this CB is on that side
-			if ps.PrimaryIdx >= 0 {
-				pr := ps.World.Units[ps.PrimaryIdx]
-				if (u.Pos.X < field.HashMid) == (pr.Pos.X < field.HashMid) || u.Role == RoleS {
-					target = ps.PrimaryIdx
+			if dest, spd, ok := ps.coverTarget(i); ok {
+				closeR := 1.15
+				if u.CoverJob.IsFlat() && ps.Play.ID == "hitch" {
+					closeR = 0.7 // Cover 2 squat: hip pocket
 				}
-			}
-			if target >= 0 {
-				rp := ps.World.Units[target].Pos
-				spd := u.Speed * 0.88
-				if ps.Def.ID == "soft_zone" {
-					rp.Y += 4
-					spd *= 0.9
-				} else if ps.Play.DepthLabel == "short" && ps.Elapsed < 0.7 {
-					// Off coverage for a beat — slant/hitch window
-					rp.Y += 2.0
-					spd *= 0.75
+				if u.CoverJob.IsDeep() {
+					closeR = 1.6 // don't collapse onto a stop route
 				}
-				// Don't teleport onto the receiver
-				if math.Hypot(rp.X-u.Pos.X, rp.Y-u.Pos.Y) < 1.2 {
+				if math.Hypot(dest.X-u.Pos.X, dest.Y-u.Pos.Y) < closeR {
 					u.VX, u.VY = 0, 0
 					return
 				}
-				moveToward(u, rp, spd)
+				moveToward(u, dest, spd)
 			}
 		}
 		return
 	}
 
-	// Ball in air: DBs play ball / receiver
+	// Ball in air: play the assignment, not "everyone chase the ball."
 	if ps.BallInAir && (u.Role == RoleCB || u.Role == RoleS || u.Role == RoleLB) {
-		moveToward(u, ps.BallPos, u.Speed)
+		if u.CoverJob.IsDeep() {
+			// Stay over the top of the throw.
+			sit := field.Pos{X: u.CoverLand.X, Y: math.Max(u.CoverLand.Y, ps.BallPos.Y+2)}
+			if ps.PrimaryIdx >= 0 {
+				pr := ps.World.Units[ps.PrimaryIdx].Pos
+				sit.X = sit.X*0.45 + pr.X*0.55
+			}
+			moveToward(u, sit, u.Speed)
+			return
+		}
+		if u.CoverJob.IsFlat() || u.CoverJob == CoverMan {
+			moveToward(u, ps.BallPos, u.Speed*1.05)
+			return
+		}
+		// Hook/robber: drive the catch point, don't fly past it.
+		sit := ps.BallPos
+		if sit.Y < ps.LOS+5 {
+			sit.Y = ps.LOS + 5
+		}
+		moveToward(u, sit, u.Speed)
 		return
 	}
 
@@ -1140,16 +1393,62 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 		spd := u.Speed
 
 		// Engaged on a block: heavily slowed / sealed
-		if u.Engaged > 0 {
+		if u.Engaged > 0 && !u.ContainEdge {
 			spd *= 0.2
 			// Try to shed slowly toward ball but stay washed
 			moveToward(u, bp, spd)
 			return
 		}
 
+		if ps.QBKeep && u.Spy {
+			moveToward(u, bp, spd*1.18)
+			return
+		}
+
+		// Sweep contain first — don't let "read the run" delays sit them in the alley late.
+		if ps.Play.ID == "sweep" && u.ContainEdge {
+			forceX := field.HashMid + 17.5
+			if ps.Def.ID == "run_fit" {
+				forceX = field.HashMid + 12
+				if bp.X > forceX {
+					forceX = bp.X + 1.6
+				}
+				spd *= 1.16
+			} else if ps.Shell.ID == playbook.ShellCover2 {
+				forceX = field.HashMid + 13.5
+				spd *= 1.12
+			} else {
+				spd *= 1.02
+			}
+			moveToward(u, field.Pos{X: forceX, Y: bp.Y + 0.2}, spd)
+			return
+		}
+
 		// Run fit: LBs/DL crash harder once free
 		if ps.Def.ID == "run_fit" && (u.Role == RoleLB || u.Role == RoleDL) {
 			spd *= 1.12
+		}
+		// Hitch YAC: zone shells wrap; man-free only if you're the beaten man.
+		if ps.Play.ID == "hitch" && ps.CaughtAt > 0 {
+			switch ps.Shell.ID {
+			case playbook.ShellManFree:
+				if u.CoverJob == CoverMan && ballCarrier == u.CoverMan {
+					spd *= 1.08
+				}
+			default:
+				if u.Role == RoleCB || u.Role == RoleS || u.Role == RoleLB {
+					spd *= 1.18
+				}
+			}
+		}
+		// Inside zone: second level reads so the crease exists vs base.
+		if ps.Play.ID == "inside_zone" && ps.Def.ID != "run_fit" && ps.Def.ID != "blitz" {
+			if u.Role == RoleLB && ps.Elapsed < 0.85 {
+				spd *= 0.42
+			}
+			if u.Role == RoleS && ps.Elapsed < 1.0 {
+				spd *= 0.55
+			}
 		}
 		// Soft zone / pass rush: second-level slower to scrape on early run
 		if ps.Play.Type == playbook.PlayRun && ps.Elapsed < 1.1 {
@@ -1168,28 +1467,13 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 				spd *= 0.55
 			}
 		}
-		// Sweep contain: Run Fit crashes the edge; other calls flow more
 		if ps.Play.ID == "sweep" {
-			if u.Role == RoleS {
-				if ps.Def.ID == "run_fit" {
-					bp.X += 2
-					spd *= 1.1 // force
-				} else {
-					bp.X += 3
-				}
+			if u.Role == RoleS && !u.CoverJob.IsDeep() {
+				bp.X += 2
+				spd *= 1.05
 			}
-			if u.Role == RoleCB && u.Pos.X > field.HashMid {
-				if ps.Def.ID == "run_fit" {
-					spd *= 1.05 // support edge
-				} else if ps.Elapsed < 0.55 {
-					spd *= 0.8
-					bp.X += 1.5
-				}
-			}
-			if u.Role == RoleLB && u.Pos.X > field.HashMid {
-				if ps.Def.ID == "run_fit" {
-					spd *= 1.15 // scrape hard
-				}
+			if u.Role == RoleCB && u.Pos.X > field.HashMid && !u.ContainEdge {
+				spd *= 1.02
 			}
 			if u.Role == RoleLB && u.Pos.X < field.HashMid {
 				spd *= 0.85
@@ -1272,8 +1556,9 @@ func moveToward(u *Unit, target field.Pos, speed float64) {
 
 func (ps *PlayState) checkDeadBall() {
 	// Sack: defender hits QB with ball on pass before throw
-	if ps.Play.Type == playbook.PlayPass && !ps.BallInAir {
-		if ps.QBIdx >= 0 && ps.World.Units[ps.QBIdx].HasBall {
+	if ps.Play.Type == playbook.PlayPass && !ps.BallInAir && !ps.QBKeep {
+		if ps.QBIdx >= 0 && ps.World.Units[ps.QBIdx].HasBall &&
+			ps.World.Units[ps.QBIdx].Pos.Y < ps.LOS+0.4 {
 			qb := ps.World.Units[ps.QBIdx]
 			for _, u := range ps.World.Units {
 				if u.Side != SideDefense {
@@ -1284,8 +1569,14 @@ func (ps *PlayState) checkDeadBall() {
 				}
 				// Slightly tighter sack radius; quick game gets the ball out
 				sackR := 1.25
-				if ps.Play.DepthLabel == "short" && ps.Elapsed < 0.9 {
-					sackR = 1.1
+				if ps.Play.DepthLabel == "short" && ps.Elapsed < 0.75 {
+					sackR = 1.08
+				}
+				if ps.Elapsed > 0.95 {
+					sackR = 1.45
+				}
+				if ps.Def.ID == "blitz" || ps.Def.ID == "pass_rush" {
+					sackR += 0.12
 				}
 				if math.Hypot(u.Pos.X-qb.Pos.X, u.Pos.Y-qb.Pos.Y) < sackR {
 					ps.Alive = false
@@ -1355,6 +1646,19 @@ func (ps *PlayState) checkDeadBall() {
 		if ps.Play.ID == "sweep" && ps.Elapsed < 0.9 {
 			tackleR = 1.15
 		}
+		if ps.Play.ID == "inside_zone" && ps.Elapsed < 0.9 && ps.Def.ID != "run_fit" {
+			tackleR = 1.12
+		}
+		if ps.Play.ID == "hitch" && ps.CaughtAt > 0 && ps.Elapsed-ps.CaughtAt < 1.35 {
+			switch ps.Shell.ID {
+			case playbook.ShellManFree:
+				tackleR = 1.38 // beat man → YAC
+			case playbook.ShellCover2:
+				tackleR = 1.78 // squat + wrap
+			default:
+				tackleR = 1.68 // C3: SS/LB wrap the alley
+			}
+		}
 		for _, u := range ps.World.Units {
 			if u.Side != SideDefense {
 				continue
@@ -1370,6 +1674,15 @@ func (ps *PlayState) checkDeadBall() {
 			// Backside defenders need to close fully
 			if ps.Play.ID == "sweep" && u.Pos.X < field.HashMid {
 				r = 1.2
+			}
+			if ps.Play.ID == "sweep" && u.ContainEdge {
+				r = 1.45
+				if ps.Def.ID == "run_fit" {
+					r = 1.62
+				}
+				if ps.Shell.ID == playbook.ShellCover2 {
+					r = 1.58
+				}
 			}
 			if math.Hypot(u.Pos.X-bc.Pos.X, u.Pos.Y-bc.Pos.Y) < r {
 				ps.Alive = false

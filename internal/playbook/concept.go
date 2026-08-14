@@ -1,0 +1,55 @@
+package playbook
+
+// Slot is one of the four visible categories. The player picks the slot,
+// then an explicit variant — never a silent down-and-distance swap.
+type Slot struct {
+	Key   int
+	Name  string // Inside / Outside / Quick / Shot
+	Plays []Play
+}
+
+func PlaySlots() []Slot {
+	off := DefaultOffense()
+	byID := map[string]Play{}
+	for _, p := range off {
+		byID[p.ID] = p
+	}
+	return []Slot{
+		{Key: 1, Name: "Inside", Plays: []Play{byID["inside_zone"]}},
+		{Key: 2, Name: "Outside", Plays: []Play{byID["sweep"]}},
+		{Key: 3, Name: "Quick", Plays: []Play{byID["slant"], byID["hitch"]}},
+		{Key: 4, Name: "Shot", Plays: []Play{byID["post"]}},
+	}
+}
+
+// Concept is the reusable play definition. New plays should go through here
+// instead of more play.ID switches in sim.
+type Concept struct {
+	Play
+	DropYards    float64 // QB drop; 0 = handoff
+	PlayAction   bool
+	PrimaryDepth float64 // yards past LOS for the primary
+	PrimaryBreak string  // "post", "slant", "hitch", "go"
+}
+
+func ConceptFor(id string) (Concept, bool) {
+	c, ok := concepts()[id]
+	return c, ok
+}
+
+func concepts() map[string]Concept {
+	off := DefaultOffense()
+	byID := map[string]Play{}
+	for _, p := range off {
+		byID[p.ID] = p
+	}
+	return map[string]Concept{
+		"post": {
+			Play:         byID["post"],
+			DropYards:    3.4,
+			PlayAction:   false,
+			PrimaryDepth: 16,
+			PrimaryBreak: "post",
+		},
+	}
+}

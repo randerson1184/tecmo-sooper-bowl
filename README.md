@@ -16,13 +16,14 @@ cd tecmo-sooper-bowl
 go run ./cmd/game
 ```
 
-Requires **Go 1.21+**. On macOS, Xcode Command Line Tools are usually enough for Ebitengine.
+Requires **Go 1.26.5+** (see `go.mod`). On macOS, Xcode Command Line Tools are usually enough for Ebitengine.
 
 ## Controls
 
 | Key | Action |
 |-----|--------|
-| **1–4** | Select play (pre-snap) |
+| **1–4** | Select slot: **1** inside · **2** outside · **3** quick (slant) · **4** shot (post) |
+| **Shift+3** | Cycle quick game (**hitch**) — the name in the HUD is what you ran |
 | **Space** | Snap · on passes, **throw** to primary (green ring) |
 | **↑ ↓ ← →** | Steer QB / ball carrier (**↑** = toward their end zone) |
 | **Shift** / **E** | Juke (burst + short tackle evade) |
@@ -33,18 +34,23 @@ Requires **Go 1.21+**. On macOS, Xcode Command Line Tools are usually enough for
 ## What’s in already
 
 - Full-field camera that zooms on the ball  
-- 4-play book: Inside Zone, Toss Sweep, Sslant, Hitch  
+- Four slots: inside zone · sweep · quick (slant / hitch) · shot (**post**)  
 - O-line push, pursuit, tackles, sacks, incompletes, TDs  
 - Stamina + juke  
-- Tendency-aware defense calls (e.g. spam runs → Run Fit)  
+- Tendency-aware **front + coverage shell** (hitch diet → Cover 2; run success → Run Fit; pass diet lights the box only if the run is not already working)  
+- Offensive line: 1:1 pass pro, pocket collapses if you hold it; successful runs buy a beat, 3rd/4th & long gets hotter  
+- Every front sets a sweep edge (light boxes later/wider, not vacant)  
 - JSONL play logging under `logs/` for balance tuning  
 
 ## Plays
 
-1. **Inside Zone** — up the gut  
-2. **Toss Sweep** — stretch right (defense will load the edge if you live here)  
-3. **Slant** — quick timing throw to the green-ring primary  
-4. **Hitch** — outside stop + YAC  
+The HUD name is what snaps. Situation changes the defense, not your button.
+
+1. **Inside Zone** (1) — up the gut  
+2. **Toss Sweep** (2) — stretch right  
+3. **Slant** (3) — quick timing throw to the green-ring primary  
+4. **Hitch** (Shift+3) — outside stop + YAC  
+5. **Post** (4) — intermediate shot, ~16-yard break  
 
 ## Stack
 
@@ -83,7 +89,8 @@ go build -o tecmo-sooper-bowl ./cmd/game
 - [x] Camera, stamina, juke  
 - [x] Run blocking + play balance pass  
 - [x] Play logging  
-- [ ] Clearer defensive “they’re loading the box” feedback  
+- [x] Coverage shells + a real post on 4  
+- [ ] Readable pre-snap looks (hide the named defensive call)  
 - [ ] Ratings / broken tackles  
 - [ ] Season shell  
 - [ ] WASM browser build for one-click playtests  

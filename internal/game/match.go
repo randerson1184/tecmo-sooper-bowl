@@ -159,10 +159,15 @@ type SituationClass int
 const (
 	SitNormal SituationClass = iota
 	SitShortYardage  // 3rd/4th & <= 2
-	SitThirdLong     // 3rd & >= 7
+	SitThirdLong     // 3rd or 4th & >= 7 (name kept; includes 4th & long)
 	SitRedZone       // inside opponent 20
 	SitGoalLine      // inside opponent 5
 )
+
+// LongDown is 3rd or 4th and 7+ (obvious passing down).
+func (m *Match) LongDown() bool {
+	return m != nil && m.Down >= 3 && m.Distance >= 7
+}
 
 func (m *Match) Situation() SituationClass {
 	toGoal := 100 - m.BallY
@@ -175,7 +180,7 @@ func (m *Match) Situation() SituationClass {
 	if m.Down >= 3 && m.Distance <= 2 {
 		return SitShortYardage
 	}
-	if m.Down == 3 && m.Distance >= 7 {
+	if m.LongDown() {
 		return SitThirdLong
 	}
 	return SitNormal

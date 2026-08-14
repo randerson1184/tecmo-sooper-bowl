@@ -35,10 +35,12 @@ func DefaultOffense() []Play {
 		{ID: "sweep", Name: "Toss Sweep", Type: PlayRun, Side: SideRight, DepthLabel: "none", Description: "Stretch to the right"},
 		{ID: "slant", Name: "Slant", Type: PlayPass, Side: SideLeft, DepthLabel: "short", Description: "Quick slant timing throw"},
 		{ID: "hitch", Name: "Hitch", Type: PlayPass, Side: SideRight, DepthLabel: "short", Description: "Stop route on the outside"},
+		{ID: "post", Name: "Post", Type: PlayPass, Side: SideMiddle, DepthLabel: "intermediate", Description: "Stem vertical, break to the post ~16 yards"},
 	}
 }
 
-// DefenseCall is a named defensive game plan (see DESIGN.md §6).
+// DefenseCall is a named *front / pressure* (see DESIGN.md §6).
+// Coverage lives on CoverageShell — do not encode Cover 2/3 here.
 type DefenseCall struct {
 	ID          string
 	Name        string
@@ -47,10 +49,10 @@ type DefenseCall struct {
 
 func DefaultDefenseCalls() []DefenseCall {
 	return []DefenseCall{
-		{ID: "base", Name: "Base", Description: "Balanced front & coverage"},
+		{ID: "base", Name: "Base", Description: "Balanced front"},
 		{ID: "run_fit", Name: "Run Fit", Description: "Extra body in the box"},
-		{ID: "soft_zone", Name: "Soft Zone", Description: "Protect deep; give underneath"},
-		{ID: "pass_rush", Name: "Pass Rush", Description: "Pressure over coverage"},
-		{ID: "blitz", Name: "Blitz", Description: "Send extra; risk big play"},
+		{ID: "soft_zone", Name: "Soft Zone", Description: "Light box; second level stays back"},
+		{ID: "pass_rush", Name: "Pass Rush", Description: "Pressure over the front"},
+		{ID: "blitz", Name: "Blitz", Description: "Send extra; risk a big play"},
 	}
 }

@@ -16,7 +16,8 @@ type Entry struct {
 	Time      time.Time `json:"time"`
 	OffPlay   string    `json:"off_play"`   // inside_zone, sweep, slant, hitch
 	OffName   string    `json:"off_name"`
-	DefCall   string    `json:"def_call"`   // base, run_fit, ...
+	DefCall   string    `json:"def_call"`   // base, run_fit, ... (front)
+	Shell     string    `json:"shell"`      // cover3, cover2, man_free
 	Outcome   string    `json:"outcome"`    // tackle, incomplete, td, ...
 	Yards     float64   `json:"yards"`
 	DownBefore int      `json:"down_before"`
@@ -29,6 +30,7 @@ type Entry struct {
 	PassPct   float64   `json:"pass_pct"`
 	RightPct  float64   `json:"right_pct"`
 	Stamina   float64   `json:"stamina"` // 0..1 display (1 = fresh)
+	QBKeep    bool      `json:"qb_keep,omitempty"`
 	Message   string    `json:"message"`
 }
 
