@@ -2,9 +2,9 @@
 
 > Working title on purpose. Tecmo-inspired American football with a smarter defensive brain — not a byte-accurate NES rom.
 
-**Status:** Phase 0 / MVP skeleton  
-**Repo:** local `Tecmo_Sooper_Bowl` (publish when ready)  
-**Last updated:** 2026-08-14
+**Status:** Phase 3 brain + readable looks (playable prototype)  
+**Repo:** [tecmo-sooper-bowl](https://github.com/randerson1184/tecmo-sooper-bowl)  
+**Last updated:** 2026-08-15
 
 ---
 
@@ -87,7 +87,11 @@ Bucket recent offensive plays (e.g. last 12–20):
 - Side: left / middle / right  
 - Depth: short / intermediate / deep (passes)  
 - Situation: down + distance class (e.g. short yardage, 3rd/4th & long, red zone)  
-- **Effectiveness** (separate from frequency): success / explosives, decayed over a 12-play window
+- **Effectiveness** (separate from frequency): success / explosives, decayed over a 12-play window  
+- **Called pass vs actual throw vs QB keep**: `PassPct` is what they selected; `PassThreat` is only real throws; `KeepThreat` is QB runs. A scramble does not teach the staff “the slant is working.”  
+- Live `KeepThreat` vetoes lighting the box the same way `RunThreat` does, and a paid spy must be able to finish the tackle.  
+- A correct post vs two-high is a 12–16 yard shot, not 30 yards of YAC. Deep halves wrap after the catch. Blitz still sets a sweep edge.  
+- Cover 3 / Pass Rush cannot assign a bailed deep-third CB as the sweep alley; the playside flat/hook sets the edge.
 
 ### 6.2 Front / pressure (independent of coverage)
 
@@ -122,7 +126,9 @@ Blown coverages become **rare failures of tradeoffs**, not “everyone chase the
 
 ### 6.4 Player-facing feedback
 
-HUD currently names `Front / Shell` so playtests can trust the call. **Next slice:** hide the name. The player reads four pictures — one-high corners off (Cover 3), one-high press (Man Free), two-high corners off (Cover 2 / later Quarters), two-high press (Cover 2 man). Debug key keeps the label.
+HUD hides the named call. The player reads four pictures — one-high corners off (Cover 3), one-high press (Man Free), two-high corners squat (Cover 2), two-high press later (Cover 2 man). **D** names the call for debug. Occasional disguise is still later.
+
+![Pre-snap: named call hidden, one-high look](docs/presnap-look.png)
 
 ---
 
@@ -194,12 +200,14 @@ PreSnap → SelectPlay → Snap → ResolvePlay (ticks) → DeadBall → UpdateT
 - [x] Coverage shells (Cover 3 / Cover 2 / Man Free) as a separate concept from fronts  
 - [x] Coverage assignment invariants (`internal/sim/coverage_test.go`)  
 - [ ] Situational blitz logic  
-- [x] Readable feedback that defense is adjusting (HUD: `Front / Shell` — hide after alignments are the tell)  
+- [x] Readable pre-snap pictures; named call hidden (**D** reveals `Front / Shell`)  
 - [x] Pass-pro assignments + pocket budget (success/threat, not just RunPct)  
-- [x] Sweep contain on every front, including light boxes (Run Fit is stronger, not the only edge)  
-- [x] Pass-heavy looks do not light the box if `RunThreat` is live  
+- [x] Sweep contain on every front, including light boxes and blitz (Run Fit is stronger, not the only edge)  
+- [x] Post YAC: deep halves wrap so a Cover 2 shot is not a house  
+- [x] Pass-heavy looks do not light the box if `RunThreat` or `KeepThreat` is live  
 - [x] QB-keep / scramble: spy in the hole; keep flips coverage to run pursuit; tagged for game-plan  
-- [ ] Four pre-snap pictures; named call hidden (debug toggle)  
+- [x] Four pre-snap pictures; named call hidden (debug toggle)  
+- [ ] Occasional disguise (same picture, different post-snap)  
 
 ### Phase 4 — Content & juice
 
@@ -262,4 +270,4 @@ Graphics may be rectangles. Fun > fidelity.
 
 ---
 
-*Next slice: four readable pre-snap alignments, then hide the named defensive call.*
+*Next: one more mixed playtest with the call hidden, then Shift+4 play-action if the book still reads.*

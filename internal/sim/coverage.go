@@ -79,6 +79,47 @@ func AssignCoverage(w *World, shell playbook.CoverageShell, los float64, primary
 	_ = primaryIdx
 }
 
+// AlignDefense writes coverage jobs and the pre-snap picture onto a placed world.
+func AlignDefense(w *World, def playbook.DefenseCall, shell playbook.CoverageShell, los float64) {
+	if w == nil {
+		return
+	}
+	AssignCoverage(w, shell, los, -1)
+	shadeFront(w, def, los)
+}
+
+func shadeFront(w *World, def playbook.DefenseCall, los float64) {
+	for i := range w.Units {
+		u := &w.Units[i]
+		if u.Side != SideDefense {
+			continue
+		}
+		switch def.ID {
+		case "run_fit":
+			if u.Role == RoleLB || u.Role == RoleDL {
+				u.Pos.Y -= 0.8
+			}
+		case "soft_zone":
+			if u.Role == RoleLB {
+				u.Pos.Y += 1.2
+			}
+			if u.Role == RoleS || u.Role == RoleCB {
+				u.Pos.Y += 1.6
+			}
+		case "pass_rush":
+			if u.Role == RoleDL {
+				u.Pos.Y -= 0.35
+			}
+		case "blitz":
+			if u.Role == RoleLB && math.Abs(u.Pos.X-field.HashMid) < 5 {
+				u.Pos.Y -= 1.4
+			}
+		}
+		u.Pos = field.Clamp(u.Pos)
+	}
+	_ = los
+}
+
 func clearCover(w *World) {
 	for i := range w.Units {
 		if w.Units[i].Side != SideDefense {
@@ -223,26 +264,52 @@ func shadeAlignment(w *World, shell playbook.CoverageShell, los float64) {
 		if u.Side != SideDefense || u.CoverJob == CoverNone {
 			continue
 		}
-		switch {
-		case u.CoverJob.IsDeep():
-			u.Pos.Y += 1.4
-		case u.CoverJob.IsFlat():
-			u.Pos.Y -= 0.7
-		case u.CoverJob == CoverMan && u.CoverMan >= 0:
-			m := w.Units[u.CoverMan].Pos
-			u.Pos.X += (m.X - u.Pos.X) * 0.12
-			if shell.ID == playbook.ShellManFree {
-				u.Pos.Y -= 0.35 // tighter cushion
+		switch shell.ID {
+		case playbook.ShellCover2:
+			// Two high, corners squat the flats.
+			if u.CoverJob.IsDeep() {
+				u.Pos.X = u.CoverLand.X
+				u.Pos.Y = los + 13.5
 			}
-		case u.CoverJob == CoverHook && shell.ID == playbook.ShellCover2:
-			// Mike already dropped via landmark; shade a step back.
-			if math.Abs(u.Pos.X-field.HashMid) < 4 {
-				u.Pos.Y += 0.8
+			if u.CoverJob.IsFlat() {
+				u.Pos.Y = los + 4.0
+			}
+			if u.CoverJob == CoverHook && math.Abs(u.Pos.X-field.HashMid) < 4 {
+				u.Pos.Y = los + 8.5
+			}
+		case playbook.ShellManFree:
+			// One high, corners pressed.
+			if u.CoverJob == CoverDeepMid {
+				u.Pos.X = field.HashMid
+				u.Pos.Y = los + 14.5
+			}
+			if u.CoverJob == CoverHook {
+				u.Pos.X = u.CoverLand.X
+				u.Pos.Y = los + 8.0
+			}
+			if u.CoverJob == CoverMan && u.CoverMan >= 0 {
+				m := w.Units[u.CoverMan].Pos
+				u.Pos.X = m.X
+				u.Pos.Y = m.Y + 1.3
+			}
+		default: // Cover 3: one high, corners off.
+			if u.CoverJob == CoverDeepMid {
+				u.Pos.X = field.HashMid
+				u.Pos.Y = los + 14.5
+			}
+			if u.CoverJob == CoverDeepLeft || u.CoverJob == CoverDeepRight {
+				u.Pos.Y = los + 8.2
+			}
+			if u.CoverJob == CoverHook {
+				u.Pos.X = u.CoverLand.X
+				u.Pos.Y = los + 10.5 // in the box, not a second high safety
+			}
+			if u.CoverJob.IsFlat() {
+				u.Pos.Y = los + 5.5
 			}
 		}
 		u.Pos = field.Clamp(u.Pos)
 	}
-	_ = los
 }
 
 // DeepOwners returns defender indices whose job is a deep zone.

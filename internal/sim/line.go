@@ -213,10 +213,26 @@ func (ps *PlayState) declareKeep() {
 	// A dropback sits *behind* the LOS. A keep is north through it.
 	if qb.Pos.Y >= ps.LOS+0.05 {
 		ps.QBKeep = true
+		ps.freeSpyToTackle()
 		return
 	}
 	if ps.Elapsed >= 0.5 && qb.Pos.Y >= ps.LOS-0.35 && qb.VY > 2.5 {
 		ps.QBKeep = true
+		ps.freeSpyToTackle()
+	}
+}
+
+// freeSpyToTackle drops blocks on the spy so a paid look can actually finish the play.
+func (ps *PlayState) freeSpyToTackle() {
+	idx := SpyIndex(ps.World)
+	if idx < 0 {
+		return
+	}
+	ps.World.Units[idx].Engaged = 0
+	for i := range ps.World.Units {
+		if ps.World.Units[i].BlockTarget == idx {
+			ps.World.Units[i].BlockTarget = -1
+		}
 	}
 }
 

@@ -29,9 +29,13 @@ type Entry struct {
 	RunPct    float64   `json:"run_pct"`
 	PassPct   float64   `json:"pass_pct"`
 	RightPct  float64   `json:"right_pct"`
-	Stamina   float64   `json:"stamina"` // 0..1 display (1 = fresh)
-	QBKeep    bool      `json:"qb_keep,omitempty"`
-	Message   string    `json:"message"`
+	Stamina    float64 `json:"stamina"` // 0..1 display (1 = fresh)
+	Thrown     bool    `json:"thrown"`
+	Carrier    string  `json:"carrier,omitempty"`
+	QBKeep     bool    `json:"qb_keep"`
+	KeepThreat float64 `json:"keep_threat"`
+	KeepN      int     `json:"keep_n"`
+	Message    string  `json:"message"`
 }
 
 // Logger appends entries to memory and optionally a JSONL file.
@@ -80,10 +84,10 @@ func (l *Logger) Path() string {
 	return l.path
 }
 
-// Record appends one play result.
-func (l *Logger) Record(e Entry) {
+// Record appends one play result and returns it with the sequence number set.
+func (l *Logger) Record(e Entry) Entry {
 	if l == nil {
-		return
+		return e
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -99,6 +103,7 @@ func (l *Logger) Record(e Entry) {
 			_, _ = l.file.Write(append(b, '\n'))
 		}
 	}
+	return e
 }
 
 // Entries returns a copy of all recorded plays this session.
@@ -123,6 +128,8 @@ type Summary struct {
 	Incomp   int
 	Sack     int
 	Stuff    int // < 2 yards on runs / sacks
+	Keep     int
+	KeepYds  float64
 }
 
 // SummarizeByPlay rolls up the session.
@@ -139,6 +146,10 @@ func (l *Logger) SummarizeByPlay() []Summary {
 		}
 		s.N++
 		s.AvgYards += e.Yards
+		if e.QBKeep {
+			s.Keep++
+			s.KeepYds += e.Yards
+		}
 		switch e.Outcome {
 		case "touchdown":
 			s.TD++
@@ -179,8 +190,12 @@ func (l *Logger) FormatSummary() string {
 	}
 	lines := "PLAY LOG SUMMARY\n"
 	for _, s := range sum {
-		lines += fmt.Sprintf("  %-12s n=%2d  avg=%+5.1f  ok=%d  td=%d  inc=%d  sack=%d  stuff=%d\n",
-			s.Play, s.N, s.AvgYards, s.Success, s.TD, s.Incomp, s.Sack, s.Stuff)
+		keepAvg := 0.0
+		if s.Keep > 0 {
+			keepAvg = s.KeepYds / float64(s.Keep)
+		}
+		lines += fmt.Sprintf("  %-12s n=%2d  avg=%+5.1f  ok=%d  td=%d  inc=%d  sack=%d  stuff=%d  keep=%d (avg=%+.1f)\n",
+			s.Play, s.N, s.AvgYards, s.Success, s.TD, s.Incomp, s.Sack, s.Stuff, s.Keep, keepAvg)
 	}
 	if p := l.Path(); p != "" {
 		lines += "file: " + p

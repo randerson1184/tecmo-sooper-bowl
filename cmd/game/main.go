@@ -7,6 +7,7 @@
 //   SHIFT   juke / spin (brief evade + burst)
 //   R       reset match
 //   T       show play-log summary in tip + stdout
+//   D       toggle named defensive call (hidden by default)
 //   Esc     quit
 package main
 
@@ -63,6 +64,7 @@ type App struct {
 
 	deadBallTimer float64
 	loggedPlay    bool // true once this dead-ball result has been written
+	showCall      bool // debug: name the front / shell
 }
 
 func newApp() *App {
@@ -91,9 +93,9 @@ func newApp() *App {
 	a.slotI = 0
 	a.varI = 0
 	a.repickDefense()
-	a.world = sim.PlacePreSnap(a.match.LineOfScrimmage)
+	a.world = a.placeLook()
 	a.cam.Snap(field.Pos{X: field.HashMid, Y: a.match.LineOfScrimmage}, render.ScaleSelect)
-	a.tip = "1-4 slot · SHIFT+3 hitch · SPACE snap · Arrows · T log · R reset"
+	a.tip = "1-4 slot · SHIFT+3 hitch · SPACE snap · D names the D · T log · R reset"
 	if a.plays != nil && a.plays.Path() != "" {
 		log.Printf("play log → %s", a.plays.Path())
 	}
@@ -106,7 +108,16 @@ func (a *App) repickDefense() {
 	a.shell = pkg.Shell
 }
 
+func (a *App) placeLook() *sim.World {
+	w := sim.PlacePreSnap(a.match.LineOfScrimmage)
+	sim.AlignDefense(w, a.defense, a.shell, a.match.LineOfScrimmage)
+	return w
+}
+
 func (a *App) defLabel() string {
+	if !a.showCall {
+		return "look"
+	}
 	return playbook.Package{Front: a.defense, Shell: a.shell}.String()
 }
 
@@ -154,6 +165,14 @@ func (a *App) Update() error {
 		}
 		return ebiten.Termination
 	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyD) {
+		a.showCall = !a.showCall
+		if a.showCall {
+			a.tip = "Call shown: " + a.defLabel()
+		} else {
+			a.tip = "Call hidden — read safeties and corners. D to name it."
+		}
+	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyT) {
 		sum := a.plays.FormatSummary()
 		fmt.Fprintln(os.Stderr, sum)
@@ -196,7 +215,7 @@ func (a *App) Update() error {
 			a.match.SpotKickoffOrDrive()
 			a.fatigue.BetweenDrives()
 			a.repickDefense()
-			a.world = sim.PlacePreSnap(a.match.LineOfScrimmage)
+			a.world = a.placeLook()
 			a.play = nil
 			a.cam.Snap(field.Pos{X: field.HashMid, Y: a.match.LineOfScrimmage}, render.ScaleSelect)
 			a.tip = "Kickoff spot — drive on. 1-4 play, SPACE snap."
@@ -405,13 +424,21 @@ func (a *App) recordPlay(r sim.Result, tend ai.Snapshot) {
 		PassPct:    tend.PassPct,
 		RightPct:   tend.RightPct,
 		Stamina:    a.fatigue.Display(sim.RoleRB),
-		QBKeep:     a.play != nil && a.play.QBKeep,
+		Thrown:     r.Thrown,
+		Carrier:    string(r.Carrier),
+		QBKeep:     r.QBKeep,
+		KeepThreat: tend.KeepThreat,
+		KeepN:      tend.KeepN,
 		Message:    r.Message,
 	}
-	a.plays.Record(e)
-	// One line to terminal for live tuning sessions
-	fmt.Fprintf(os.Stderr, "play#%d %s vs %s → %s %+.1f yds (%s) tend run=%.0f%% right=%.0f%%\n",
-		e.N, e.OffPlay, e.DefCall, e.Outcome, e.Yards, e.Message, e.RunPct*100, e.RightPct*100)
+	e = a.plays.Record(e)
+	keep := ""
+	if e.QBKeep {
+		keep = " KEEP"
+	}
+	fmt.Fprintf(os.Stderr, "play#%d%s %s (%s) vs %s/%s → %s %+.1f yds (%s) tend run=%.0f%% pass=%.0f%% keepT=%.1f n=%d\n",
+		e.N, keep, e.OffPlay, e.Carrier, e.DefCall, e.Shell, e.Outcome, e.Yards, e.Message,
+		e.RunPct*100, e.PassPct*100, e.KeepThreat, e.KeepN)
 }
 
 func (a *App) finishDeadBall() {
@@ -434,7 +461,7 @@ func (a *App) finishDeadBall() {
 		Situation: a.snapSit,
 		Yards:     r.YardsGained,
 		Outcome:   r.Outcome.String(),
-		QBKeep:    a.play != nil && a.play.QBKeep,
+		QBKeep:    r.QBKeep,
 	})
 	a.recordPlay(r, a.tracker.Snapshot())
 
@@ -446,7 +473,7 @@ func (a *App) finishDeadBall() {
 	}
 
 	a.repickDefense()
-	a.world = sim.PlacePreSnap(a.match.LineOfScrimmage)
+	a.world = a.placeLook()
 	a.play = nil
 	a.match.Phase = game.PhasePlaySelect
 	snap := a.tracker.Snapshot()
@@ -485,7 +512,7 @@ func (a *App) Draw(screen *ebiten.Image) {
 	}
 	shown := a.currentPlay()
 	shown.Name = a.selectedLabel()
-	render.DrawHUD(screen, a.match, shown, a.defense, a.shell, a.tip, phase, stam, jukeCD)
+	render.DrawHUD(screen, a.match, shown, a.defense, a.shell, a.tip, phase, stam, jukeCD, a.showCall)
 }
 
 func (a *App) Layout(outsideWidth, outsideHeight int) (int, int) {

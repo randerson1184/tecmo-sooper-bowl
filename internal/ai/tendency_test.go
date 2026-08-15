@@ -114,6 +114,37 @@ func TestKeepThreatFromSuccessfulScrambles(t *testing.T) {
 	}
 }
 
+func TestKeepDoesNotInflatePassThreat(t *testing.T) {
+	tr := NewTracker(12)
+	for i := 0; i < 4; i++ {
+		tr.Observe(PlayObservation{
+			Type:    playbook.PlayPass,
+			Yards:   14,
+			Outcome: "tackle",
+			QBKeep:  true,
+		})
+	}
+	s := tr.Snapshot()
+	if s.PassPct < 0.9 {
+		t.Fatalf("called-pass frequency should still count keeps: %+v", s)
+	}
+	if s.ThrowN != 0 {
+		t.Fatalf("keeps are not throws: %+v", s)
+	}
+	if s.PassThreat != 0 || s.PassYds != 0 {
+		t.Fatalf("keep yards must not raise pass threat: %+v", s)
+	}
+	if s.KeepN != 4 || s.KeepThreat < 2 || s.KeepYds < 50 {
+		t.Fatalf("keep film should live on Keep*: %+v", s)
+	}
+
+	tr.Observe(PlayObservation{Type: playbook.PlayPass, Yards: 8, Outcome: "tackle"})
+	s = tr.Snapshot()
+	if s.ThrowN != 1 || s.PassThreat <= 0 {
+		t.Fatalf("an actual throw should raise pass threat: %+v", s)
+	}
+}
+
 func TestPassHeavyWithoutRunThreatLightsTheBox(t *testing.T) {
 	snap := Snapshot{Samples: 10, PassPct: 0.8, RunPct: 0.2}
 	rng := rand.New(rand.NewSource(4))
@@ -123,6 +154,18 @@ func TestPassHeavyWithoutRunThreatLightsTheBox(t *testing.T) {
 	}
 	if counts["soft_zone"]+counts["pass_rush"] < counts["run_fit"]+counts["base"] {
 		t.Fatalf("pass diet with no run threat should light the box; counts=%v", counts)
+	}
+}
+
+func TestPassHeavyWithLiveKeepThreatStaysInTheBox(t *testing.T) {
+	snap := Snapshot{Samples: 10, PassPct: 0.8, RunPct: 0.2, KeepThreat: 2.4}
+	rng := rand.New(rand.NewSource(6))
+	counts := map[string]int{}
+	for i := 0; i < 200; i++ {
+		counts[ChooseDefense(game.SitNormal, snap, rng).ID]++
+	}
+	if counts["soft_zone"] >= counts["base"] {
+		t.Fatalf("live keep threat must veto lighting the box; counts=%v", counts)
 	}
 }
 

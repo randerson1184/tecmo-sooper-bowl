@@ -162,6 +162,64 @@ func TestPostPrimaryIsDeepAndShellsStillHaveHelp(t *testing.T) {
 	}
 }
 
+func TestPreSnapPicturesAreReadable(t *testing.T) {
+	const los = 30.0
+	w3 := PlacePreSnap(los)
+	AlignDefense(w3, defByID("base"), playbook.ShellByID(playbook.ShellCover3), los)
+	w2 := PlacePreSnap(los)
+	AlignDefense(w2, defByID("base"), playbook.ShellByID(playbook.ShellCover2), los)
+	wm := PlacePreSnap(los)
+	AlignDefense(wm, defByID("base"), playbook.ShellByID(playbook.ShellManFree), los)
+
+	if n := countDeepSafeties(w3, los+12); n != 1 {
+		t.Fatalf("Cover 3 should show one high safety, got %d", n)
+	}
+	if n := countDeepSafeties(w2, los+12); n < 2 {
+		t.Fatalf("Cover 2 should show two high safeties, got %d", n)
+	}
+	if n := countDeepSafeties(wm, los+12); n != 1 {
+		t.Fatalf("Man Free should show one high safety, got %d", n)
+	}
+
+	c3 := avgCBY(w3)
+	c2 := avgCBY(w2)
+	cm := avgCBY(wm)
+	if c3 < los+6 {
+		t.Fatalf("Cover 3 corners should play off, y=%.1f", c3)
+	}
+	if c2 > los+6 {
+		t.Fatalf("Cover 2 corners should squat, y=%.1f", c2)
+	}
+	if cm > los+4 {
+		t.Fatalf("Man Free corners should press, y=%.1f", cm)
+	}
+}
+
+func countDeepSafeties(w *World, minY float64) int {
+	n := 0
+	for _, u := range w.Units {
+		if u.Side == SideDefense && u.Role == RoleS && u.Pos.Y >= minY {
+			n++
+		}
+	}
+	return n
+}
+
+func avgCBY(w *World) float64 {
+	var s float64
+	var n int
+	for _, u := range w.Units {
+		if u.Side == SideDefense && u.Role == RoleCB {
+			s += u.Pos.Y
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return s / float64(n)
+}
+
 func TestManFreeSafetyStaysDeep(t *testing.T) {
 	ps := StartSnap(30, playByID("slant"), defByID("base"), playbook.ShellByID(playbook.ShellManFree), rand.New(rand.NewSource(1)), Fatigue{}, LineContext{})
 	for _, u := range ps.World.Units {

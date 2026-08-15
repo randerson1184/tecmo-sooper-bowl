@@ -54,6 +54,10 @@ type Unit struct {
 	RushFree bool
 	// ContainEdge: this defender sets the alley on stretch (every front gets one).
 	ContainEdge bool
+	// ContainForceX / ContainSpd are written once in setSweepContain.
+	// Live pursuit must read these — do not re-derive a second table.
+	ContainForceX float64
+	ContainSpd    float64
 	// Spy: hole player vs QB keep. Does not drop into coverage.
 	Spy bool
 

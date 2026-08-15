@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 
@@ -274,6 +275,143 @@ func TestSweepVsPassRushHasAnEdge(t *testing.T) {
 	}
 }
 
+func TestContainPursuitUsesStoredForceX(t *testing.T) {
+	play := playByID("sweep")
+	def := defByID("pass_rush")
+	shell := playbook.ShellByID(playbook.ShellManFree)
+	ps := StartSnap(30, play, def, shell, rand.New(rand.NewSource(6)), Fatigue{}, LineContext{})
+	idx := SweepContainIndex(ps.World)
+	if idx < 0 {
+		t.Fatal("missing contain")
+	}
+	want := ps.World.Units[idx].ContainForceX
+	if want < field.HashMid+10 || want > field.HashMid+15.5 {
+		t.Fatalf("stored forceX not a tight alley: %.1f", want)
+	}
+	// Live a few ticks so pursuit runs.
+	for i := 0; i < 25; i++ {
+		if !ps.Tick(1.0/60.0, Input{DX: 0.4, DY: 1}) {
+			break
+		}
+	}
+	got := ps.World.Units[idx].Pos.X
+	loose := field.HashMid + 17.5
+	if math.Abs(got-loose) < math.Abs(got-want) {
+		t.Fatalf("pursuit chased the old loose alley (x=%.1f want=%.1f loose=%.1f)", got, want, loose)
+	}
+}
+
+func TestCover3PassRushContainIsNearTheLOS(t *testing.T) {
+	// Film: Pass Rush / Cover 3 picked a bailed deep-third CB and gave +45.
+	play := playByID("sweep")
+	def := defByID("pass_rush")
+	shell := playbook.ShellByID(playbook.ShellCover3)
+	ps := StartSnap(30, play, def, shell, rand.New(rand.NewSource(4)), Fatigue{}, LineContext{})
+	idx := SweepContainIndex(ps.World)
+	if idx < 0 {
+		t.Fatal("pass_rush+cover3 missing contain")
+	}
+	u := ps.World.Units[idx]
+	if u.CoverJob.IsDeep() {
+		t.Fatalf("deep third cannot be the alley player: job=%s y=%.1f", u.CoverJob, u.Pos.Y)
+	}
+	if u.Pos.Y > 30+8 {
+		t.Fatalf("contain still too deep to force: y=%.1f", u.Pos.Y)
+	}
+}
+
+func TestSweepVsPassRushCover3IsNotAHouseCall(t *testing.T) {
+	play := playByID("sweep")
+	def := defByID("pass_rush")
+	shell := playbook.ShellByID(playbook.ShellCover3)
+	house := 0
+	const n = 30
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 63))
+		ps := StartSnap(30, play, def, shell, rng, Fatigue{}, LineContext{})
+		for i := 0; i < 60*8; i++ {
+			if !ps.Tick(1.0/60.0, Input{DX: 0.4, DY: 1}) {
+				break
+			}
+		}
+		if ps.Result.YardsGained >= 20 {
+			house++
+		}
+	}
+	if house > 8 {
+		t.Fatalf("sweep vs pass_rush+cover3 still a house call: %d/%d were 20+", house, n)
+	}
+}
+
+func TestBlitzSweepIsNotAHouseCall(t *testing.T) {
+	play := playByID("sweep")
+	def := defByID("blitz")
+	house := 0
+	const n = 30
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 19))
+		ps := StartPlay(30, play, def, rng, Fatigue{})
+		if SweepContainIndex(ps.World) < 0 {
+			t.Fatal("blitz missing contain")
+		}
+		alley := ps.World.Units[SweepContainIndex(ps.World)].Pos.X - field.HashMid
+		if alley > 16.0 {
+			t.Fatalf("blitz contain too wide: alley=%.1f", alley)
+		}
+		for i := 0; i < 60*8; i++ {
+			if !ps.Tick(1.0/60.0, Input{DX: 0.4, DY: 1}) {
+				break
+			}
+		}
+		if ps.Result.YardsGained >= 20 {
+			house++
+		}
+	}
+	if house > 8 {
+		t.Fatalf("sweep vs blitz still a house call: %d/%d were 20+", house, n)
+	}
+}
+
+func TestPostVsCover2IsNotAHouseCall(t *testing.T) {
+	// Film: Run Fit / Cover 2 gave +24 / +30 / +29 after the catch.
+	play := playByID("post")
+	def := defByID("run_fit")
+	shell := playbook.ShellByID(playbook.ShellCover2)
+	house, caught := 0, 0
+	const n = 30
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 23))
+		ps := StartSnap(30, play, def, shell, rng, Fatigue{}, LineContext{})
+		for i := 0; i < 60*10; i++ {
+			t := float64(i) / 60.0
+			in := Input{DY: -0.2} // stay in the pocket
+			if t >= 0.85 && t < 0.92 {
+				in.Throw = true
+			}
+			if ps.Thrown && !ps.BallInAir {
+				in.DY = 1 // turn up after the catch
+			}
+			if !ps.Tick(1.0/60.0, in) {
+				break
+			}
+		}
+		if ps.Result.Thrown && (ps.Result.Outcome == OutcomeTackle ||
+			ps.Result.Outcome == OutcomeOutOfBounds ||
+			ps.Result.Outcome == OutcomeTouchdown) {
+			caught++
+			if ps.Result.YardsGained >= 20 {
+				house++
+			}
+		}
+	}
+	if caught < 6 {
+		t.Fatalf("post vs cover2 should still complete sometimes; caught=%d/%d", caught, n)
+	}
+	if house > 8 {
+		t.Fatalf("post vs cover2 still a house call: %d/%d catches were 20+", house, n)
+	}
+}
+
 func TestSlantOftenCompletes(t *testing.T) {
 	// Throw at ~0.55s — classic quick slant timing
 	good, _ := samplePlay("slant", "base", 30, Input{DY: -0.2}, 0.55)
@@ -326,6 +464,69 @@ func TestHitchStillWorks(t *testing.T) {
 	}
 	if ok < 12 {
 		t.Fatalf("hitch regressed: %d/25", ok)
+	}
+}
+
+func TestSlantCompletesWithoutExploding(t *testing.T) {
+	play := playByID("slant")
+	def := defByID("base")
+	ok, house := 0, 0
+	const n = 30
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 11))
+		ps := StartPlay(30, play, def, rng, Fatigue{})
+		for i := 0; i < 60*8; i++ {
+			t := float64(i) / 60.0
+			in := Input{DY: 1}
+			if t >= 0.5 && t < 0.55 {
+				in.Throw = true
+			}
+			if !ps.Tick(1.0/60.0, in) {
+				break
+			}
+		}
+		if ps.Result.Thrown && (ps.Result.Outcome == OutcomeTackle ||
+			ps.Result.Outcome == OutcomeOutOfBounds ||
+			ps.Result.Outcome == OutcomeTouchdown) {
+			ok++
+			if ps.Result.YardsGained >= 16 {
+				house++
+			}
+		}
+	}
+	if ok < 10 {
+		t.Fatalf("slant should still complete often; %d/%d", ok, n)
+	}
+	if house > 8 {
+		t.Fatalf("slant YAC still a house call: %d/%d completions were 16+", house, n)
+	}
+}
+
+func TestSlantVsManFreeIsNotAHouseCall(t *testing.T) {
+	play := playByID("slant")
+	def := defByID("base")
+	shell := playbook.ShellByID(playbook.ShellManFree)
+	house := 0
+	const n = 30
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 13))
+		ps := StartSnap(30, play, def, shell, rng, Fatigue{}, LineContext{})
+		for i := 0; i < 60*8; i++ {
+			t := float64(i) / 60.0
+			in := Input{DY: 1}
+			if t >= 0.5 && t < 0.55 {
+				in.Throw = true
+			}
+			if !ps.Tick(1.0/60.0, in) {
+				break
+			}
+		}
+		if ps.Result.Thrown && ps.Result.YardsGained >= 18 {
+			house++
+		}
+	}
+	if house > 8 {
+		t.Fatalf("slant vs man free still a house call: %d/%d were 18+", house, n)
 	}
 }
 

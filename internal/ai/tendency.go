@@ -76,6 +76,8 @@ type Snapshot struct {
 	RunThreat, PassThreat   float64 // decayed success+explosives, capped
 	KeepThreat              float64
 	KeepN                   int
+	KeepYds                 float64
+	ThrowN                  int // actual throws (called pass, not a keep)
 }
 
 func (t *Tracker) Snapshot() Snapshot {
@@ -85,9 +87,9 @@ func (t *Tracker) Snapshot() Snapshot {
 	}
 	var runs, passes, left, right, mid int
 	var runOK, passOK int
-	var runYds, passYds float64
+	var runYds, passYds, keepYds float64
 	var runThreat, passThreat, keepThreat, w float64
-	var keepN int
+	var keepN, throwN int
 	w = 1
 	for i := n - 1; i >= 0; i-- {
 		p := t.Plays[i]
@@ -98,17 +100,6 @@ func (t *Tracker) Snapshot() Snapshot {
 		if p.Explosive() {
 			score += 1
 		}
-		if p.QBKeep {
-			keepN++
-			// Same gate as run/pass: stuffed keeps are film, not a game plan.
-			if p.Success() {
-				ks := 1.0
-				if p.Explosive() {
-					ks += 1
-				}
-				keepThreat += ks * w
-			}
-		}
 		if p.Type == playbook.PlayRun {
 			runs++
 			runYds += p.Yards
@@ -117,12 +108,26 @@ func (t *Tracker) Snapshot() Snapshot {
 			}
 			runThreat += score * w
 		} else {
+			// Called pass — frequency. Effectiveness splits throw vs keep.
 			passes++
-			passYds += p.Yards
-			if p.Success() {
-				passOK++
+			if p.QBKeep {
+				keepN++
+				keepYds += p.Yards
+				if p.Success() {
+					ks := 1.0
+					if p.Explosive() {
+						ks += 1
+					}
+					keepThreat += ks * w
+				}
+			} else {
+				throwN++
+				passYds += p.Yards
+				if p.Success() {
+					passOK++
+				}
+				passThreat += score * w
 			}
-			passThreat += score * w
 		}
 		switch p.Side {
 		case playbook.SideLeft:
@@ -159,12 +164,14 @@ func (t *Tracker) Snapshot() Snapshot {
 		PassThreat: passThreat,
 		KeepThreat: keepThreat,
 		KeepN:      keepN,
+		KeepYds:    keepYds,
+		ThrowN:     throwN,
 	}
 	if runs > 0 {
 		s.RunSuccessPct = float64(runOK) / float64(runs)
 	}
-	if passes > 0 {
-		s.PassSuccessPct = float64(passOK) / float64(passes)
+	if throwN > 0 {
+		s.PassSuccessPct = float64(passOK) / float64(throwN)
 	}
 	return s
 }
@@ -286,8 +293,8 @@ func ChooseDefense(sit game.SituationClass, snap Snapshot, rng *rand.Rand) playb
 		}
 		if snap.PassPct >= 0.65 {
 			w["pass_rush"] += 0.5
-			if snap.RunThreat >= 1.5 {
-				// Throwing a lot, but the run already hurt us — stay in a real box.
+			if snap.RunThreat >= 1.5 || snap.KeepThreat >= 1.5 {
+				// Throwing a lot, but a run (designed or QB) already hurt us.
 				w["base"] += 0.45
 			} else {
 				w["soft_zone"] += 0.7
@@ -296,16 +303,16 @@ func ChooseDefense(sit game.SituationClass, snap Snapshot, rng *rand.Rand) playb
 		}
 		if snap.PassThreat >= 2 {
 			w["pass_rush"] += 0.45
-			if snap.RunThreat < 1.5 {
+			if snap.RunThreat < 1.5 && snap.KeepThreat < 1.5 {
 				w["soft_zone"] += 0.25
 			}
 		}
 		if snap.KeepThreat >= 1.5 {
 			// Distinct tools — not one magic counter.
 			w["pass_rush"] += 0.4 // squeeze lanes
-			w["run_fit"] += 0.3
+			w["run_fit"] += 0.45
 			w["blitz"] -= 0.15 // don't empty the middle more
-			w["soft_zone"] -= 0.2
+			w["soft_zone"] -= 0.45
 		}
 		// Right-side run that is actually gaining — shade the box, don't flip it.
 		if snap.RightPct >= 0.4 && snap.RunThreat >= 1.5 {

@@ -159,6 +159,15 @@ func TestQBKeepUpTheMiddleIsNotAHouseCall(t *testing.T) {
 		if ps.QBKeep {
 			keeps++
 		}
+		if ps.Result.Thrown {
+			t.Fatal("mash-up declared a throw")
+		}
+		if ps.Result.Outcome != OutcomeSack {
+			if !ps.Result.QBKeep || ps.Result.Carrier != RoleQB {
+				t.Fatalf("whistle must tag the QB run: keep=%v carrier=%s outcome=%s yards=%.1f",
+					ps.Result.QBKeep, ps.Result.Carrier, ps.Result.Outcome, ps.Result.YardsGained)
+			}
+		}
 		if ps.Result.YardsGained >= 20 {
 			house++
 		}
@@ -168,6 +177,84 @@ func TestQBKeepUpTheMiddleIsNotAHouseCall(t *testing.T) {
 	}
 	if house > 8 {
 		t.Fatalf("QB draw up the middle still a house call: %d/%d were 20+", house, n)
+	}
+}
+
+func TestSpyReducesKeepYardsVsNoSpy(t *testing.T) {
+	play := playByID("slant")
+	def := defByID("base")
+	shell := playbook.DefaultShell()
+	const n = 25
+	var with, without float64
+	var withN, withoutN int
+	for seed := int64(0); seed < n; seed++ {
+		run := func(threat float64) (float64, bool) {
+			rng := rand.New(rand.NewSource(seed + 11))
+			ps := StartSnap(30, play, def, shell, rng, Fatigue{}, LineContext{KeepThreat: threat, Samples: 8})
+			for i := 0; i < 60*8; i++ {
+				if !ps.Tick(1.0/60.0, Input{DY: 1}) {
+					break
+				}
+			}
+			if !ps.Result.QBKeep {
+				return 0, false
+			}
+			return ps.Result.YardsGained, true
+		}
+		if y, ok := run(0); ok {
+			without += y
+			withoutN++
+		}
+		if y, ok := run(2.4); ok {
+			with += y
+			withN++
+		}
+	}
+	if withN < 8 || withoutN < 8 {
+		t.Fatalf("not enough keeps to compare (spy=%d bare=%d)", withN, withoutN)
+	}
+	avgWith := with / float64(withN)
+	avgBare := without / float64(withoutN)
+	if avgWith > avgBare-1.0 {
+		t.Fatalf("spy should cut keep yards (spy=%.1f bare=%.1f)", avgWith, avgBare)
+	}
+}
+
+func TestSpyMakesWorkingKeepsStuffable(t *testing.T) {
+	play := playByID("slant")
+	def := defByID("base")
+	ctx := LineContext{KeepThreat: 2.4, Samples: 8}
+	house, keeps, stuffed := 0, 0, 0
+	const n = 25
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 4))
+		ps := StartSnap(30, play, def, playbook.DefaultShell(), rng, Fatigue{}, ctx)
+		if SpyIndex(ps.World) < 0 {
+			t.Fatal("expected a spy on a live keep threat")
+		}
+		for i := 0; i < 60*8; i++ {
+			if !ps.Tick(1.0/60.0, Input{DY: 1}) {
+				break
+			}
+		}
+		if ps.Result.QBKeep {
+			keeps++
+			if ps.Result.YardsGained < 6 {
+				stuffed++
+			}
+		}
+		if ps.Result.YardsGained >= 16 {
+			house++
+		}
+	}
+	if keeps < 8 {
+		t.Fatalf("expected mash-up keeps; keeps=%d/%d", keeps, n)
+	}
+	if house > 6 {
+		t.Fatalf("spy still letting keeps house: %d/%d were 16+", house, n)
+	}
+	if stuffed < 4 {
+		t.Fatalf("spy should finish some keeps; stuffed=%d keeps=%d", stuffed, keeps)
 	}
 }
 

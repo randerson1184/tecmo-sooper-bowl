@@ -6,7 +6,9 @@ A **Tecmo-inspired** arcade football game written in Go: short playbooks, a live
 
 > Not affiliated with Tecmo, Nintendo, or the NFL. “Sooper” is intentional.
 
-![Tecmo Sooper Bowl — pre-snap](docs/screenshot.png)
+![Tecmo Sooper Bowl — pre-snap look (HUD hides the call)](docs/presnap-look.png)
+
+Read the defense before you snap: one high vs two high, corners off vs pressed. **D** names the call if you need the debug label.
 
 ## Quick start
 
@@ -28,6 +30,7 @@ Requires **Go 1.26.5+** (see `go.mod`). On macOS, Xcode Command Line Tools are u
 | **↑ ↓ ← →** | Steer QB / ball carrier (**↑** = toward their end zone) |
 | **Shift** / **E** | Juke (burst + short tackle evade) |
 | **T** | Play-log summary (terminal) |
+| **D** | Toggle named defensive call (hidden by default — read the look) |
 | **R** | Reset drive |
 | **Esc** | Quit |
 
@@ -38,9 +41,10 @@ Requires **Go 1.26.5+** (see `go.mod`). On macOS, Xcode Command Line Tools are u
 - O-line push, pursuit, tackles, sacks, incompletes, TDs  
 - Stamina + juke  
 - Tendency-aware **front + coverage shell** (hitch diet → Cover 2; run success → Run Fit; pass diet lights the box only if the run is not already working)  
+- Pre-snap **looks** instead of a named call: one-high off (Cover 3), one-high press (Man Free), two-high squat (Cover 2)  
 - Offensive line: 1:1 pass pro, pocket collapses if you hold it; successful runs buy a beat, 3rd/4th & long gets hotter  
 - Every front sets a sweep edge (light boxes later/wider, not vacant)  
-- JSONL play logging under `logs/` for balance tuning  
+- JSONL play logging under `logs/` (`thrown`, `carrier`, `qb_keep`, `keep_threat`) so QB runs are visible on film  
 
 ## Plays
 
@@ -73,7 +77,7 @@ internal/sim/       snap loop, blocks, tackle, pass
 internal/ai/        tendencies + ChooseDefense
 internal/render/    camera + draw
 internal/logplay/   session play logs
-docs/               screenshots
+docs/               screenshots (presnap-look.png is the current HUD)
 ```
 
 ## Dev
@@ -90,7 +94,7 @@ go build -o tecmo-sooper-bowl ./cmd/game
 - [x] Run blocking + play balance pass  
 - [x] Play logging  
 - [x] Coverage shells + a real post on 4  
-- [ ] Readable pre-snap looks (hide the named defensive call)  
+- [x] Readable pre-snap looks (hide the named defensive call; **D** to name it)  
 - [ ] Ratings / broken tackles  
 - [ ] Season shell  
 - [ ] WASM browser build for one-click playtests  
