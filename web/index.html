@@ -107,10 +107,12 @@
     </p>
     <div id="actions">
       <button type="button" id="download">Download anonymous play film</button>
+      <button type="button" id="send">Send anonymous play film</button>
     </div>
     <p id="privacy">
-      The file is gameplay only (plays, yards, looks). No name, email, or keys.
-      After ~20 snaps, download and send it to whoever invited you.
+      Film is gameplay only (plays, yards, looks). No name, email, or keys.
+      The first snap also pings a counter so we know someone is actually playing.
+      Send uploads the same JSONL to us; download keeps a copy on your machine.
     </p>
   </div>
   <script src="config.js"></script>
@@ -132,9 +134,36 @@
         }
       }, { passive: false });
 
-      // First snap = a real player. Later snaps refresh the count (throttled server-side).
+      function playcountURL() {
+        return (window.TECMO_PLAYCOUNT_URL || "").replace(/\/+$/, "");
+      }
+
+      function uploadFilm() {
+        const url = playcountURL();
+        if (!url || typeof tecmoExportFilm !== "function") {
+          return Promise.resolve(false);
+        }
+        const text = tecmoExportFilm();
+        if (!text || text.length < 20) {
+          return Promise.resolve(false);
+        }
+        return fetch(url + "/film", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: text,
+          keepalive: true,
+        })
+          .then(function (r) {
+            return r.ok;
+          })
+          .catch(function () {
+            return false;
+          });
+      }
+
+      // First snap = a real player. Every 10 snaps we also stash film.
       window.tecmoOnSnap = function (n, sessionId, build) {
-        const url = window.TECMO_PLAYCOUNT_URL;
+        const url = playcountURL();
         if (!url || (n !== 1 && n % 10 !== 0)) {
           return;
         }
@@ -143,19 +172,26 @@
           build: build,
           snaps: n,
         });
-        try {
-          if (n > 1 && navigator.sendBeacon) {
-            navigator.sendBeacon(url, new Blob([body], { type: "application/json" }));
-            return;
-          }
-        } catch (e) {}
         fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: body,
           keepalive: true,
         }).catch(function () {});
+        uploadFilm();
       };
+
+      document.getElementById("send").addEventListener("click", function () {
+        if (typeof tecmoExportFilm !== "function") {
+          status.textContent = "Game is still loading.";
+          return;
+        }
+        uploadFilm().then(function (ok) {
+          status.textContent = ok
+            ? "Film sent. Thank you — keep playing if you want."
+            : "Could not send film (play a snap first, or try again).";
+        });
+      });
 
       document.getElementById("download").addEventListener("click", function () {
         if (typeof tecmoExportFilm !== "function") {
