@@ -316,6 +316,46 @@ func TestSlantKeepVsBaseCover2IsNotAHouseCall(t *testing.T) {
 	}
 }
 
+func TestRepeatKeepsGetTighter(t *testing.T) {
+	play := playByID("slant")
+	def := defByID("base")
+	shell := playbook.DefaultShell() // Cover 3 — first keep stays clean
+	const n = 25
+	var bare, taxed float64
+	var bareN, taxedN int
+	for seed := int64(0); seed < n; seed++ {
+		run := func(ctx LineContext) (float64, bool) {
+			rng := rand.New(rand.NewSource(seed + 31))
+			ps := StartSnap(30, play, def, shell, rng, Fatigue{}, ctx)
+			for i := 0; i < 60*8; i++ {
+				if !ps.Tick(1.0/60.0, Input{DY: 1}) {
+					break
+				}
+			}
+			if !ps.Result.QBKeep {
+				return 0, false
+			}
+			return ps.Result.YardsGained, true
+		}
+		if y, ok := run(LineContext{Samples: 8}); ok {
+			bare += y
+			bareN++
+		}
+		if y, ok := run(LineContext{KeepN: 5, KeepThreat: 1.2, Samples: 8}); ok {
+			taxed += y
+			taxedN++
+		}
+	}
+	if bareN < 8 || taxedN < 8 {
+		t.Fatalf("not enough keeps (bare=%d taxed=%d)", bareN, taxedN)
+	}
+	avgBare := bare / float64(bareN)
+	avgTax := taxed / float64(taxedN)
+	if avgTax > avgBare-0.6 {
+		t.Fatalf("repeat keeps should pay less (repeat=%.1f first=%.1f)", avgTax, avgBare)
+	}
+}
+
 func TestObviousPassIsHotterThanFirstDown(t *testing.T) {
 	normal := scriptedPassUntil(t, "base", LineContext{}, -1, 1.45, 16)
 	long := scriptedPassUntil(t, "base", LineContext{ObviousPass: true, Samples: 4}, -1, 1.45, 16)

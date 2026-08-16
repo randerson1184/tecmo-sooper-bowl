@@ -16,6 +16,7 @@ type LineContext struct {
 	RunPct      float64
 	PassPct     float64
 	KeepThreat  float64 // QB keep / scramble success (decayed)
+	KeepN       int     // recent keep attempts (volume, not success)
 	Samples     int
 }
 
@@ -32,6 +33,12 @@ func (c LineContext) PassSell() bool {
 // WantsSpy is a dedicated hole player — a coverage cost, not the default.
 func (c LineContext) WantsSpy() bool {
 	return c.KeepThreat >= 1.5
+}
+
+// RepeatKeep is volume: they keep calling the scramble even if it is not
+// exploding. First keep stays a viable answer; the third+ starts to fill.
+func (c LineContext) RepeatKeep() bool {
+	return c.KeepN >= 3
 }
 
 func (c LineContext) holdSeconds(front string) float64 {
@@ -232,9 +239,13 @@ func (ps *PlayState) commitKeep() {
 }
 
 // shadeKeepHole sits the Mike in the A-gap on Cover 2 slants so a keep
-// is not a vacant draw. Not a dedicated Spy — first-down Cover 3 stays clean.
-func shadeKeepHole(w *World, los float64, shell playbook.CoverageShell) {
-	if w == nil || shell.ID != playbook.ShellCover2 {
+// is not a vacant draw. Not a dedicated Spy — first-down Cover 3 stays clean
+// until they keep repeating the scramble.
+func shadeKeepHole(w *World, los float64, shell playbook.CoverageShell, line LineContext) {
+	if w == nil {
+		return
+	}
+	if shell.ID != playbook.ShellCover2 && !line.RepeatKeep() {
 		return
 	}
 	idx := closestHookLB(w)
@@ -275,6 +286,22 @@ func closestHookLB(w *World) int {
 }
 
 // scrapeKeepHole unblocks the hole player so react-on-commit can finish.
+// keepCloseMult scales hole/spy close-out as they keep repeating the scramble.
+func (ps *PlayState) keepCloseMult(base float64) float64 {
+	m := base
+	if ps.Line.KeepThreat >= 2.5 {
+		m += 0.12
+	} else if ps.Line.KeepThreat >= 1.5 {
+		m += 0.06
+	}
+	if ps.Line.KeepN >= 5 {
+		m += 0.08
+	} else if ps.Line.RepeatKeep() {
+		m += 0.04
+	}
+	return m
+}
+
 func (ps *PlayState) scrapeKeepHole() {
 	idx := SpyIndex(ps.World)
 	if idx < 0 {

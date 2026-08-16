@@ -166,6 +166,7 @@ func (a *App) lineCtx() sim.LineContext {
 		RunPct:      snap.RunPct,
 		PassPct:     snap.PassPct,
 		KeepThreat:  snap.KeepThreat,
+		KeepN:       snap.KeepN,
 		Samples:     snap.Samples,
 	}
 }

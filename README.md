@@ -29,7 +29,7 @@ Requires **Go 1.26.5+** (see `go.mod`). On macOS, Xcode Command Line Tools are u
 | **Shift+4** | Cycle shot: **PA Post** · **PA Glance** (fake inside zone; glance sits over the Mike) |
 | **Space** | Snap · on passes, **throw** to primary (green ring). On PA, Space during the mesh **buffers** until the fake finishes |
 | **↑ ↓ ← →** | Steer QB / ball carrier (**↑** = toward their end zone) |
-| **Shift** / **E** | Juke (burst + short tackle evade). On PA during the mesh, **aborts the fake** (no bite) |
+| **Shift** / **E** | Juke (burst + short tackle evade). On PA during the mesh, **aborts the fake** (no bite, no juke) |
 | **T** | Play-log summary (terminal) |
 | **D** | Toggle named defensive call (hidden by default). Disguise prints `look → live` |
 | **R** | Reset drive |
@@ -57,7 +57,7 @@ The HUD name is what snaps. Situation changes the defense, not your button.
 4. **Hitch** (Shift+3) — outside stop + YAC  
 5. **Post** (4) — intermediate shot, ~16-yard break  
 6. **PA Post** (Shift+4) — mesh with the RB, then throw the post. Space during the fake **buffers**; Shift **aborts** (no bite). A working run buys a leftover window after the mesh; pass-sell only shaves that window while the run is live. Holding past it costs rush  
-7. **PA Glance** (Shift+4 twice) — same fake; leftover sit behind the Mike. Throw in the window (~0.40–0.50s) for a stop/shot; holding it is a post  
+7. **PA Glance** (Shift+4 twice) — same fake; leftover sit behind the Mike. Fake, then throw when he sits if **PA WINDOW** is still up (~0.25–0.70s after a live run). Miss it and he sits in traffic — not a delayed post
 
 ## Stack
 

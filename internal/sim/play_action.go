@@ -33,17 +33,18 @@ func (m MeshPhase) String() string {
 }
 
 const (
-	paMeshSec      = 0.22
-	paMeshBehind   = 3.6
-	paPocketTax    = 0.10
-	paWarmLeft     = 0.24 // leftover after mesh when RunThreat >= 1.5
-	paHotLeft      = 0.36 // leftover when RunThreat >= 2.5
-	paFitLeft      = 0.08
-	paSellLeftMul  = 0.35 // unearned leftover: pass-sell may flatten
-	paSellLiveMul  = 0.75 // live run: pass-sell only shaves
-	paLiveLeftMin  = 0.20 // live RunThreat keeps a hittable window
-	paHoldDrain    = 0.45 // extra pocket drain after the fake
-	glanceStemMult = 1.45 // climb to the sit; wrap handles YAC, not a free 12-yard race
+	paMeshSec       = 0.22
+	paMeshBehind    = 3.6
+	paPocketTax     = 0.10
+	paWarmLeft      = 0.48 // leftover after mesh when RunThreat >= 1.5 (bite ~0.70)
+	paHotLeft       = 0.58 // leftover when RunThreat >= 2.5 (bite ~0.80)
+	paFitLeft       = 0.08
+	paSellLeftMul   = 0.35 // unearned leftover: pass-sell may flatten
+	paSellLiveMul   = 0.75 // live run: pass-sell only shaves
+	paLiveLeftMin   = 0.36 // live RunThreat keeps a hittable leftover under pass-sell
+	paHoldDrain     = 0.45 // extra pocket drain after the fake
+	glanceStemMult  = 1.80 // plant by leftover, not after it
+	glanceStemUntil = 0.48
 )
 
 func (ps *PlayState) cacheConcept() {
@@ -124,11 +125,11 @@ func (ps *PlayState) armPlayAction() {
 		u.Target = mesh
 		u.HasTarget = true
 	}
-	// Glance: a step onto the stem — not already at the sit.
+	// Glance: on the stem, not already at the sit — plant during leftover.
 	if ps.isGlance() && ps.PrimaryIdx >= 0 {
 		u := &ps.World.Units[ps.PrimaryIdx]
-		if u.Pos.Y < ps.LOS+1.4 {
-			u.Pos.Y = ps.LOS + 1.4
+		if u.Pos.Y < ps.LOS+4.2 {
+			u.Pos.Y = ps.LOS + 4.2
 			u.Pos = field.Clamp(u.Pos)
 		}
 	}
@@ -233,7 +234,13 @@ func (ps *PlayState) glanceStem(i int) bool {
 		return false
 	}
 	u := ps.World.Units[i]
-	return ps.Elapsed < 0.50 && u.Pos.Y < ps.LOS+7
+	if ps.Elapsed >= glanceStemUntil {
+		return false
+	}
+	if !u.HasTarget {
+		return true
+	}
+	return math.Hypot(u.Pos.X-u.Target.X, u.Pos.Y-u.Target.Y) > 1.6
 }
 
 // glanceWrapRadius is YAC close-out. Cold leftover: hook/LB are already there.
@@ -242,19 +249,39 @@ func (ps *PlayState) glanceWrapRadius() float64 {
 	if !ps.isGlance() || ps.CaughtAt <= 0 || ps.Elapsed-ps.CaughtAt > 1.25 {
 		return 0
 	}
-	earned := ps.LeftoverSec >= 0.18 && ps.CaughtAt <= ps.BiteSec+0.10
-	if earned {
+	if ps.glanceEarnedThrow() {
 		if ps.Shell.ID == playbook.ShellCover2 {
 			return 1.48
 		}
 		return 1.40
 	}
+	// Missed leftover after a live run: sit in traffic harder than a cold sit.
+	missed := ps.glanceMissedLeftover()
+	late := ps.glanceHeldLate()
 	switch ps.Shell.ID {
 	case playbook.ShellManFree:
+		if missed {
+			return 1.88
+		}
+		if late {
+			return 1.78
+		}
 		return 1.62
 	case playbook.ShellCover2:
+		if missed {
+			return 2.05
+		}
+		if late {
+			return 1.95
+		}
 		return 1.82
 	default:
+		if missed {
+			return 2.02
+		}
+		if late {
+			return 1.92
+		}
 		return 1.78
 	}
 }
@@ -269,15 +296,54 @@ func (ps *PlayState) glanceWrapSpeed(u *Unit) float64 {
 	if u.Role != RoleLB && u.CoverJob != CoverHook && !u.CoverJob.IsFlat() && u.CoverJob != CoverMan {
 		return 1
 	}
-	earned := ps.LeftoverSec >= 0.18 && ps.CaughtAt <= ps.BiteSec+0.10
-	if earned {
+	if ps.glanceEarnedThrow() {
 		return 1.08
+	}
+	if ps.glanceMissedLeftover() {
+		return 1.46
+	}
+	if ps.glanceHeldLate() {
+		return 1.38
 	}
 	return 1.28
 }
 
 func (ps *PlayState) glanceSit(i int) bool {
 	return ps.isGlance() && i == ps.PrimaryIdx
+}
+
+// glanceWindowClosed: leftover is over (or never earned). Coverage sits on
+// the landmark instead of letting the stem become a delayed post.
+func (ps *PlayState) glanceWindowClosed() bool {
+	if !ps.isGlance() || ps.Thrown {
+		return false
+	}
+	if ps.Mesh == MeshAbort || ps.Mesh == MeshNone {
+		return true
+	}
+	if ps.Mesh == MeshLive {
+		return false
+	}
+	return ps.Elapsed >= ps.BiteSec
+}
+
+// glanceEarnedThrow is a leftover release — the sit while they are still down.
+func (ps *PlayState) glanceEarnedThrow() bool {
+	return ps.isGlance() && ps.LeftoverSec >= 0.18 && ps.ReleaseAt > 0 &&
+		ps.ReleaseAt <= ps.BiteSec+0.08
+}
+
+// glanceMissedLeftover: they had the window and threw after it closed.
+func (ps *PlayState) glanceMissedLeftover() bool {
+	return ps.isGlance() && ps.LeftoverSec >= 0.18 && ps.ReleaseAt > ps.BiteSec+0.08
+}
+
+// glanceHeldLate is a sit throw after leftover (or a cold mesh).
+func (ps *PlayState) glanceHeldLate() bool {
+	if !ps.isGlance() || ps.ReleaseAt <= 0 {
+		return false
+	}
+	return ps.ReleaseAt > ps.BiteSec+0.08
 }
 
 func (ps *PlayState) isPlayAction() bool {

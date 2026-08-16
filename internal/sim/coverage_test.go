@@ -269,3 +269,67 @@ func TestManFreeSafetyStaysDeep(t *testing.T) {
 	}
 	t.Fatal("no deep-mid safety")
 }
+
+func hitchCoverCB(ps *PlayState) int {
+	if ps.PrimaryIdx < 0 {
+		return -1
+	}
+	best, bestD := -1, 1e9
+	for i, u := range ps.World.Units {
+		if u.Side != SideDefense {
+			continue
+		}
+		if u.CoverJob == CoverMan && u.CoverMan == ps.PrimaryIdx {
+			return i
+		}
+		if !u.CoverJob.IsFlat() {
+			continue
+		}
+		d := math.Hypot(u.Pos.X-ps.World.Units[ps.PrimaryIdx].Pos.X, u.Pos.Y-ps.World.Units[ps.PrimaryIdx].Pos.Y)
+		if d < bestD {
+			bestD, best = d, i
+		}
+	}
+	return best
+}
+
+func TestHitchCornerDoesNotCrashTheQBOnThrow(t *testing.T) {
+	// Film: hitch diet 21/22. On release the squat/man CB ran at BallPos (the QB).
+	shells := []playbook.CoverageShell{
+		playbook.ShellByID(playbook.ShellCover2),
+		playbook.ShellByID(playbook.ShellManFree),
+	}
+	for _, sh := range shells {
+		ps := StartSnap(30, playByID("hitch"), defByID("base"), sh,
+			rand.New(rand.NewSource(4)), Fatigue{}, LineContext{})
+		for i := 0; i < 36; i++ { // sit
+			if !ps.Tick(1.0/60.0, Input{}) {
+				t.Fatalf("%s died before the throw", sh.ID)
+			}
+		}
+		cb := hitchCoverCB(ps)
+		if cb < 0 || ps.QBIdx < 0 || ps.PrimaryIdx < 0 {
+			t.Fatalf("%s: no hitch CB", sh.ID)
+		}
+		y0 := ps.World.Units[cb].Pos.Y
+		qbY := ps.World.Units[ps.QBIdx].Pos.Y
+		wrY := ps.World.Units[ps.PrimaryIdx].Pos.Y
+		ps.Tick(1.0/60.0, Input{Throw: true})
+		if !ps.BallInAir && !ps.Thrown {
+			t.Fatalf("%s: throw did not leave", sh.ID)
+		}
+		for i := 0; i < 8 && ps.Alive && ps.BallInAir; i++ {
+			ps.Tick(1.0/60.0, Input{})
+		}
+		cbNow := ps.World.Units[cb].Pos
+		if cbNow.Y < y0-0.35 && cbNow.Y < wrY-0.5 {
+			t.Fatalf("%s hitch CB crashed toward the QB on release (y0=%.1f now=%.1f qb=%.1f wr=%.1f)",
+				sh.ID, y0, cbNow.Y, qbY, wrY)
+		}
+		dWR := math.Hypot(cbNow.X-ps.World.Units[ps.PrimaryIdx].Pos.X, cbNow.Y-ps.World.Units[ps.PrimaryIdx].Pos.Y)
+		dQB := math.Hypot(cbNow.X-ps.World.Units[ps.QBIdx].Pos.X, cbNow.Y-ps.World.Units[ps.QBIdx].Pos.Y)
+		if dQB+1.2 < dWR {
+			t.Fatalf("%s hitch CB closer to the QB than the sit (dQB=%.1f dWR=%.1f)", sh.ID, dQB, dWR)
+		}
+	}
+}

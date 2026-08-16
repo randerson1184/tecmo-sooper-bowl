@@ -133,12 +133,12 @@ func TestLeftoverWindowIsEarned(t *testing.T) {
 	if coldL > 0.02 || math.Abs(coldB-paMeshSec) > 0.02 {
 		t.Fatalf("cold leftover should be 0 (left=%.2f bite=%.2f mesh=%.2f)", coldL, coldB, paMeshSec)
 	}
-	_, warmL, _ := computePAWindow(LineContext{RunThreat: 1.6, Samples: 8, RunPct: 0.5}, "base")
-	if warmL < 0.20 {
-		t.Fatalf("earned run should buy leftover after the mesh, got %.2f", warmL)
+	_, warmL, warmB := computePAWindow(LineContext{RunThreat: 1.6, Samples: 8, RunPct: 0.5}, "base")
+	if warmL < 0.44 || warmB < 0.66 {
+		t.Fatalf("warm leftover should last until the sit (left=%.2f bite=%.2f)", warmL, warmB)
 	}
 	_, hotL, hotB := computePAWindow(LineContext{RunThreat: 2.8, Samples: 8, RunPct: 0.5}, "base")
-	if hotL <= warmL || hotB <= paMeshSec+0.20 {
+	if hotL <= warmL || hotB < warmB+0.08 {
 		t.Fatalf("hot leftover should beat warm (hot=%.2f warm=%.2f bite=%.2f)", hotL, warmL, hotB)
 	}
 	_, sellL, _ := computePAWindow(LineContext{RunThreat: 2.8, PassThreat: 2.5, Samples: 8, PassPct: 0.8}, "base")
@@ -354,6 +354,35 @@ func TestHotLeftoverCrashesAfterMesh(t *testing.T) {
 	}
 }
 
+func TestMeshAbortDoesNotJuke(t *testing.T) {
+	ps := StartSnap(30, playByID("pa_post"), defByID("base"), playbook.DefaultShell(),
+		rand.New(rand.NewSource(13)), Fatigue{},
+		LineContext{RunThreat: 2.8, Samples: 8, RunPct: 0.55})
+	if ps.QBIdx < 0 {
+		t.Fatal("no QB")
+	}
+	if !ps.Tick(1.0/60.0, Input{Juke: true}) {
+		t.Fatal("abort tick killed the play")
+	}
+	if ps.Mesh != MeshAbort {
+		t.Fatalf("Shift during mesh should abort, got %s", ps.Mesh)
+	}
+	if ps.BiterN != 0 {
+		t.Fatalf("aborted fake must not buy bite, biters=%v", ps.BiterIDs)
+	}
+	if ps.JukeCooldown > 0 {
+		t.Fatalf("mesh abort must not start juke cooldown (%.2f)", ps.JukeCooldown)
+	}
+	qb := ps.World.Units[ps.QBIdx]
+	if qb.JukeTimer > 0 {
+		t.Fatalf("mesh abort must not start juke timer (%.2f)", qb.JukeTimer)
+	}
+	// Juke default is a right burst (~BaseSpeed*1.8). Mesh motion is small.
+	if math.Abs(qb.VX) > 6.0 {
+		t.Fatalf("mesh abort must not impart a lateral burst (vx=%.2f)", qb.VX)
+	}
+}
+
 func TestAbortHasNoLeftoverCrash(t *testing.T) {
 	hold := StartSnap(30, playByID("pa_post"), defByID("base"), playbook.DefaultShell(),
 		rand.New(rand.NewSource(13)), Fatigue{},
@@ -442,6 +471,42 @@ func TestPAGlanceReusesTheMesh(t *testing.T) {
 	}
 	if ps.LeftoverSec < 0.19 {
 		t.Fatalf("hot glance should earn leftover, got %.2f", ps.LeftoverSec)
+	}
+}
+
+func TestGlanceSitsDuringLeftover(t *testing.T) {
+	const los = 30.0
+	ps := StartSnap(los, playByID("pa_glance"), defByID("base"), playbook.DefaultShell(),
+		rand.New(rand.NewSource(15)), Fatigue{},
+		LineContext{RunThreat: 1.6, Samples: 8, RunPct: 0.55})
+	if ps.BiteSec < 0.66 {
+		t.Fatalf("warm glance leftover too short to sit in, bite=%.2f", ps.BiteSec)
+	}
+	// Mid leftover (~0.46s) — the sit should already be planted.
+	until := ps.MeshSec + 0.24
+	for i := 0; i < 50; i++ {
+		if ps.Elapsed >= until-1e-6 {
+			break
+		}
+		if !ps.Tick(1.0/60.0, Input{}) {
+			t.Fatal("glance died before the sit")
+		}
+	}
+	if ps.PrimaryIdx < 0 {
+		t.Fatal("no primary")
+	}
+	pr := ps.World.Units[ps.PrimaryIdx]
+	if !pr.HasTarget {
+		t.Fatal("glance lost its sit")
+	}
+	if pr.Pos.Y < los+7 {
+		t.Fatalf("glance should be at the sit during leftover, Y=%.1f target=%.1f", pr.Pos.Y, pr.Target.Y)
+	}
+	if math.Hypot(pr.Pos.X-pr.Target.X, pr.Pos.Y-pr.Target.Y) > 4.5 {
+		t.Fatalf("glance should be near the sit in leftover (pos=%+v target=%+v)", pr.Pos, pr.Target)
+	}
+	if !ps.InLeftoverWindow() {
+		t.Fatalf("sit sample should still be leftover (elapsed=%.2f bite=%.2f)", ps.Elapsed, ps.BiteSec)
 	}
 }
 
@@ -557,6 +622,98 @@ func TestPAGlanceColdIsNotAHouse(t *testing.T) {
 	avg := sum / float64(len(yards))
 	if avg > 9.5 {
 		t.Fatalf("cold glance avg should sit ~6–8, got %.1f %v", avg, yards)
+	}
+}
+
+func TestPAGlanceHeldStaysAGlance(t *testing.T) {
+	// Film: cold held glance ~1.08s averaged 11.5 with 18/32 at 12.5+.
+	// A glance that is held past leftover must sit, not become a delayed post.
+	var yards []float64
+	var deep int
+	for seed := int64(40); seed < 56; seed++ {
+		ps := StartSnap(30, playByID("pa_glance"), defByID("base"), playbook.DefaultShell(),
+			rand.New(rand.NewSource(seed)), Fatigue{}, LineContext{Samples: 8})
+		for i := 0; i < 70 && ps.Alive; i++ { // ~1.17s
+			if i == 64 {
+				ps.Tick(1.0/60.0, Input{Throw: true})
+				continue
+			}
+			if !ps.Tick(1.0/60.0, Input{}) {
+				break
+			}
+		}
+		if ps.PrimaryIdx >= 0 {
+			pr := ps.World.Units[ps.PrimaryIdx]
+			if pr.Pos.Y > ps.LOS+12.4 {
+				deep++
+			}
+		}
+		for i := 0; i < 180 && ps.Alive; i++ {
+			ps.Tick(1.0/60.0, Input{})
+		}
+		if ps.Result.Outcome == OutcomeIncomplete || ps.Result.Outcome == OutcomeSack {
+			continue
+		}
+		if ps.ReleaseAt < 0.90 {
+			t.Fatalf("expected a held throw, release_at=%.2f", ps.ReleaseAt)
+		}
+		yards = append(yards, ps.Result.YardsGained)
+		if ps.Result.YardsGained >= 12.5 {
+			t.Fatalf("held glance must not become a 12-yard post (got %.1f at release %.2f)",
+				ps.Result.YardsGained, ps.ReleaseAt)
+		}
+	}
+	if deep > 2 {
+		t.Fatalf("glance stem should sit, not climb like a post (%d/16 were past LOS+12.4)", deep)
+	}
+	if len(yards) < 3 {
+		t.Fatalf("need some held glance catches, got %d", len(yards))
+	}
+	sum := 0.0
+	for _, y := range yards {
+		sum += y
+	}
+	avg := sum / float64(len(yards))
+	if avg > 9.5 {
+		t.Fatalf("held glance should sit in traffic, avg=%.1f %v", avg, yards)
+	}
+}
+
+func TestHotLateGlancePaysLessThanInWindow(t *testing.T) {
+	resolve := func(afterBite float64) float64 {
+		var sum float64
+		var n int
+		for seed := int64(50); seed < 62; seed++ {
+			ps := StartSnap(30, playByID("pa_glance"), defByID("base"), playbook.DefaultShell(),
+				rand.New(rand.NewSource(seed)), Fatigue{},
+				LineContext{RunThreat: 2.8, Samples: 8, RunPct: 0.55})
+			until := ps.BiteSec + afterBite
+			if afterBite <= 0 {
+				until = ps.MeshSec + ps.LeftoverSec*0.55
+			}
+			for i := 0; i < 80 && ps.Alive; i++ {
+				if ps.Elapsed >= until-1e-6 {
+					break
+				}
+				ps.Tick(1.0/60.0, Input{})
+			}
+			ps.Tick(1.0/60.0, Input{Throw: true})
+			for i := 0; i < 180 && ps.Alive; i++ {
+				ps.Tick(1.0/60.0, Input{})
+			}
+			// Incompletes / sacks count — leftover is the completion, not a 9-yard consolation.
+			sum += ps.Result.YardsGained
+			n++
+		}
+		if n < 8 {
+			t.Fatalf("need a sample at afterBite=%.2f, got %d", afterBite, n)
+		}
+		return sum / float64(n)
+	}
+	inWin := resolve(-0.10)
+	late := resolve(0.28)
+	if late+1.2 >= inWin {
+		t.Fatalf("missing leftover should pay less than the sit (in=%.1f late=%.1f)", inWin, late)
 	}
 }
 

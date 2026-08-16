@@ -456,7 +456,37 @@ func (ps *PlayState) coverTarget(i int) (field.Pos, float64, bool) {
 	if u.CoverJob.IsDeep() && dest.Y < ps.LOS+9 {
 		dest.Y = ps.LOS + 9
 	}
+	// Missed leftover: sit on the glance, don't let it climb into a post.
+	if ps.glanceWindowClosed() && !u.CoverJob.IsDeep() &&
+		(u.CoverJob == CoverHook || u.CoverJob == CoverMan || u.Role == RoleLB) &&
+		ps.PrimaryIdx >= 0 {
+		pr := ps.World.Units[ps.PrimaryIdx]
+		dest = pr.Pos
+		if pr.HasTarget {
+			dest.X = pr.Target.X*0.55 + pr.Pos.X*0.45
+			dest.Y = pr.Target.Y
+		}
+		spd = u.Speed * 1.06
+	}
 	return dest, spd, true
+}
+
+// airCoverDest is the catch, not the pocket. BallPos on release is the QB.
+func (ps *PlayState) airCoverDest(u Unit) field.Pos {
+	if ps.BallTarget >= 0 && ps.BallTarget < len(ps.World.Units) {
+		return ps.World.Units[ps.BallTarget].Pos
+	}
+	if u.CoverJob == CoverMan && u.CoverMan >= 0 && u.CoverMan < len(ps.World.Units) {
+		return ps.World.Units[u.CoverMan].Pos
+	}
+	if i := ps.receiverInZone(u); i >= 0 {
+		return ps.World.Units[i].Pos
+	}
+	sit := ps.BallPos
+	if sit.Y < ps.LOS+4 {
+		sit.Y = ps.LOS + 4
+	}
+	return sit
 }
 
 // receiverInZone picks the most relevant WR/TE for this defender's job.

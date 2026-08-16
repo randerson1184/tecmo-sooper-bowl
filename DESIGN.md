@@ -144,11 +144,12 @@ Same pre-snap picture, different post-snap shell. Front is never faked.
 ### 6.6 Film notes (2026-08-15/16)
 
 - **`runT` is success, not volume.** A run scores only if it gains ≥ 4 (or a TD). `run%` is how often you handed off. Stuffed IZ into Run Fit drives `runT` to 0.
-- **PA leftover** is mesh (0.22s) + leftover. Cold leftover = 0. Warm (`runT≥1.5`) = 0.24. Hot (`≥2.5`) = 0.36. Run Fit +0.08. Live run vetoes pass-sell crush (floor 0.20). Cap is **0.36** (0.44 with Run Fit).
-- **PA Glance:** leftover sit behind the Mike. Cold *early* (~0.40s) is a 6–8 yard stop; **holding glance is still a 12-yard post.**
+- **PA leftover** is mesh (0.22s) + leftover. Cold leftover = 0. Warm (`runT≥1.5`) = 0.48 (bite ~0.70). Hot (`≥2.5`) = 0.58 (bite ~0.80). Run Fit +0.08. Live run vetoes pass-sell crush (floor 0.36). The sit is the cue — leftover lasts until he plants, not a 14-frame link.
+- **PA Glance:** leftover sit behind the Mike. Plant by ~0.40s. Throw while `PA WINDOW` is up. Miss it and he sits in traffic; a late throw after a live run must not pay like leftover. Holding it is not a delayed Post.
 - **Sweep vs Cover 3 / light box** is closed (contain at LOS+2.2, squeezes bounce). Correct stretch still gains; not a +55 walk-off.
 - **Slant keep vs Cover 2:** hole player holds the A-gap. Freelance ~+6–8 median. Thrown slant vs press stays the give.
-- **Remember, don’t patch unless they loop:** IZ crease vs Man Free / base; Post / PA Post vs Cover 2 if you hold it; glance if you hold it.
+- **Hitch on throw:** flats/man play the receiver, not `BallPos` (that was the QB). Diet film 21/22 complete was the CB crashing the pocket on release.
+- **Remember, don’t patch unless they loop:** IZ crease vs Man Free / base; Post / PA Post vs Cover 2 if you hold it; cold Glance vs Cover 2; sweep house vs Cover 3 / light.
 
 ![Pre-snap: named call hidden, one-high look](docs/presnap-look.png)
 
@@ -234,8 +235,13 @@ PreSnap → SelectPlay → Snap → ResolvePlay (ticks) → DeadBall → UpdateT
 - [x] Shift+4 play-action post (callable anytime; run success changes bite, not availability)  
 - [x] PA mesh is a real state (buffer throw / abort fake / bite only after a committed mesh)  
 - [x] PA leftover window: cold recovers when the mesh ends; a live run (or Run Fit) keeps them down after; pass-sell cuts leftover, not the fake  
+- [x] Leftover lasts until the glance sit (~0.70s warm) so the HUD window is hittable; hot-late pays less than leftover
 - [x] Live `RunThreat` vetoes leftover crush the same way it vetoes lighting the box (pass-sell only shaves; floor ~0.20s)  
 - [x] PA glance (Shift+4): sit beside/behind leftover Mike; wrap so cold is a 6–8 yard stop, leftover is the 11-yard shot  
+- [x] Glance stays a glance: miss the leftover and he sits in traffic (not a delayed Post)
+- [x] Mesh abort consumes Shift before juke (no burst / invuln on abort)
+- [x] Designed runs have a baseline role: IZ ~2.5–4 outside Run Fit; Sweep ~3–5 with occasional chunks
+- [x] Repeated QB keeps get progressively less attractive (`KeepN` fills the hole; `KeepThreat` still buys the spy)
 - [x] Occasional disguise (same picture, different post-snap); staff `Disguise` 0 = never, 1 = elite (~30%)  
 
 ### Phase 4 — Content & juice

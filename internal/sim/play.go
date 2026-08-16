@@ -288,7 +288,7 @@ func StartSnapLook(los float64, play playbook.Play, def playbook.DefenseCall, sh
 		assignPassPro(w, def)
 		assignQBSpy(w, los, def, line)
 		if play.ID == "slant" {
-			shadeKeepHole(w, los, shell)
+			shadeKeepHole(w, los, shell, line)
 		}
 	}
 
@@ -516,11 +516,12 @@ func setSweepContain(w *World, def playbook.DefenseCall, shell playbook.Coverage
 	// Base + Cover 3 still gives the stretch a chance to bounce.
 	light := def.ID == "pass_rush" || def.ID == "soft_zone" || def.ID == "blitz"
 	if light && (shell.ID == playbook.ShellCover3 || shell.ID == playbook.ShellManFree) {
-		alley = 13.0
-		spd = 1.14
-		// Hook depth is +10. Walk the edge down to the LOS — the +55 leak
+		alley = 13.6
+		spd = 1.12
+		// Hook depth is +10. Walk the edge down toward the LOS — the +55 leak
 		// was a contain standing in the hook while the stretch turned up.
-		u.Pos.Y = w.Ball.Y + 2.2
+		// Leave a yard of bounce so a correct stretch is still 3–5, not 0.
+		u.Pos.Y = w.Ball.Y + 3.2
 		step = 0
 	}
 	if u.CoverJob.IsDeep() {
@@ -891,6 +892,12 @@ func (ps *PlayState) Tick(dt float64, in Input) bool {
 		ps.doHandoff()
 	}
 
+	// Live mesh: Shift aborts the fake. Consume it so abort is not also a juke.
+	if in.Juke && ps.PlayAction && ps.Mesh == MeshLive && !ps.Thrown && !ps.QBKeep {
+		ps.abortMesh()
+		in.Juke = false
+	}
+
 	// Juke: lateral burst + brief tackle invuln
 	if in.Juke && ps.ControlIdx >= 0 && ps.JukeCooldown <= 0 {
 		ctrl := &w.Units[ps.ControlIdx]
@@ -1121,7 +1128,12 @@ func (ps *PlayState) tryThrow() {
 				lead = 0.7
 			}
 			if ps.HasConcept && ps.Concept.PrimaryBreak == "glance" {
-				lead = 0.16 // sit throw — don't lead it into a 12-yard shot
+				// Sit throw. Once he is at the landmark, do not lead it into a post.
+				lead = 0.16
+				if math.Hypot(tdx, tdy) < 2.2 {
+					lead = 0
+					aim = recv.Pos
+				}
 			}
 			aim.X = recv.Pos.X + (tdx/tdist)*recv.Speed*lead
 			aim.Y = recv.Pos.Y + (tdy/tdist)*recv.Speed*lead
@@ -1188,6 +1200,9 @@ func (ps *PlayState) checkPassArrival(dt float64) {
 	// Contest: must be truly draped (tighter than before)
 	contested := false
 	contestR := 1.35
+	if ps.isGlance() && ps.glanceHeldLate() {
+		contestR = 1.85
+	}
 	for _, u := range ps.World.Units {
 		if u.Side != SideDefense {
 			continue
@@ -1201,6 +1216,9 @@ func (ps *PlayState) checkPassArrival(dt float64) {
 	catchR := 2.1
 	if ps.Play.ID == "slant" {
 		catchR = 2.4
+	}
+	if ps.isGlance() && ps.glanceHeldLate() {
+		catchR = 1.95
 	}
 	if ps.Play.DepthLabel == "intermediate" {
 		catchR = 2.25
@@ -1232,6 +1250,11 @@ func (ps *PlayState) checkPassArrival(dt float64) {
 		if ps.Def.ID == "soft_zone" && !contested {
 			pCatch += 0.03
 		}
+		if ps.isGlance() && ps.glanceMissedLeftover() {
+			pCatch -= 0.20
+		} else if ps.isGlance() && ps.glanceHeldLate() {
+			pCatch -= 0.12
+		}
 		if pCatch < 0.35 {
 			pCatch = 0.35
 		}
@@ -1246,6 +1269,9 @@ func (ps *PlayState) checkPassArrival(dt float64) {
 			ps.CaughtAt = ps.Elapsed
 			if ps.Play.ID == "hitch" || ps.isGlance() {
 				ps.HitchGather = 0.32
+				if ps.isGlance() && ps.glanceHeldLate() {
+					ps.HitchGather = 0.46
+				}
 			}
 		} else {
 			ps.endIncomplete("Broken up / incomplete")
@@ -1331,7 +1357,17 @@ func (ps *PlayState) aiOffense(i int, dt float64) {
 		moveToward(u, u.Target, spd)
 		// Hitch / glance: sit near the landmark
 		if (ps.Play.ID == "hitch" && u.Role == RoleWR) || ps.glanceSit(i) {
-			if math.Hypot(u.Pos.X-u.Target.X, u.Pos.Y-u.Target.Y) < 1.2 {
+			if ps.glanceSit(i) && u.Pos.Y > u.Target.Y {
+				u.Pos.Y = u.Target.Y
+				if u.VY > 0 {
+					u.VY = 0
+				}
+			}
+			sitR := 1.2
+			if ps.glanceSit(i) {
+				sitR = 2.0
+			}
+			if math.Hypot(u.Pos.X-u.Target.X, u.Pos.Y-u.Target.Y) < sitR {
 				u.VX, u.VY = 0, 0
 			}
 		}
@@ -1579,10 +1615,17 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 			return
 		}
 		if u.CoverJob.IsFlat() || u.CoverJob == CoverMan {
-			moveToward(u, ps.BallPos, u.Speed*1.05)
+			// Play the receiver. Chasing BallPos runs them at the QB on release.
+			dest := ps.airCoverDest(*u)
+			if ps.Play.ID == "hitch" && math.Hypot(dest.X-u.Pos.X, dest.Y-u.Pos.Y) < 0.8 {
+				u.VX, u.VY = 0, 0
+				return
+			}
+			moveToward(u, dest, u.Speed*1.05)
 			return
 		}
 		// Hook/robber: drive the catch point, don't fly past it.
+		// Leave leftover LBs; they close from the crash, not from the WR.
 		sit := ps.BallPos
 		if sit.Y < ps.LOS+5 {
 			sit.Y = ps.LOS + 5
@@ -1605,7 +1648,7 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 		}
 
 		if ps.QBKeep && u.Spy {
-			moveToward(u, bp, spd*1.38)
+			moveToward(u, bp, spd*ps.keepCloseMult(1.38))
 			return
 		}
 		if ps.QBKeep && (u.HoleFill || (u.Role == RoleLB && (u.CoverJob == CoverHook || math.Abs(u.Pos.X-field.HashMid) < 5))) {
@@ -1613,7 +1656,7 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 			if u.HoleFill {
 				burst = 1.42
 			}
-			moveToward(u, bp, spd*burst)
+			moveToward(u, bp, spd*ps.keepCloseMult(burst))
 			return
 		}
 
@@ -1629,8 +1672,8 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 			}
 			// Cover 3 / light: squeeze if they bounce outside the stored alley.
 			light := ps.Def.ID == "pass_rush" || ps.Def.ID == "soft_zone" || ps.Def.ID == "blitz"
-			if light && (ps.Shell.ID == playbook.ShellCover3 || ps.Shell.ID == playbook.ShellManFree) && bp.X > forceX {
-				forceX = bp.X + 1.3
+			if light && (ps.Shell.ID == playbook.ShellCover3 || ps.Shell.ID == playbook.ShellManFree) && bp.X > forceX+1.4 {
+				forceX = bp.X + 1.1
 			}
 			// Set the edge at the LOS — do not chase into the backfield and stuff every stretch.
 			ty := bp.Y + 0.2
@@ -1680,7 +1723,7 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 		// Cover 2 is the exception — the Mike fills or the A-gap is a 60-yard alley.
 		c2hole := ps.Play.ID == "inside_zone" && ps.Shell.ID == playbook.ShellCover2
 		if ps.Play.ID == "inside_zone" && ps.Def.ID != "run_fit" && ps.Def.ID != "blitz" {
-			if u.Role == RoleLB && ps.Elapsed < 0.85 {
+			if u.Role == RoleLB && ps.Elapsed < 0.95 {
 				if c2hole && u.CoverJob == CoverHook && math.Abs(u.Pos.X-field.HashMid) < 5 {
 					if ps.Elapsed < 0.95 {
 						spd *= 0.22 // crease exists
@@ -1688,7 +1731,7 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 						spd *= 1.12 // then the alley closes
 					}
 				} else if !(c2hole && u.CoverJob == CoverHook) {
-					spd *= 0.42
+					spd *= 0.34
 				}
 			}
 			if u.Role == RoleS && ps.Elapsed < 1.0 {
@@ -1717,6 +1760,10 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 			}
 		}
 		if ps.Play.ID == "sweep" {
+			if !u.ContainEdge && ps.Def.ID != "run_fit" && ps.Def.ID != "blitz" &&
+				u.Role == RoleLB && ps.Elapsed < 0.65 {
+				spd *= 0.50
+			}
 			if u.Role == RoleS && !u.CoverJob.IsDeep() {
 				bp.X += 2
 				if ps.Elapsed < 0.7 {
@@ -1900,11 +1947,11 @@ func (ps *PlayState) checkDeadBall() {
 		if ps.Play.ID == "sweep" && ps.Elapsed < 0.9 {
 			tackleR = 1.15
 		}
-		if ps.Play.ID == "inside_zone" && ps.Elapsed < 0.9 && ps.Def.ID != "run_fit" {
+		if ps.Play.ID == "inside_zone" && ps.Elapsed < 0.95 && ps.Def.ID != "run_fit" {
 			if ps.Shell.ID == playbook.ShellCover2 {
-				tackleR = 1.18
+				tackleR = 1.16
 			} else {
-				tackleR = 1.12
+				tackleR = 1.06
 			}
 		}
 		if ps.Play.ID == "hitch" && ps.CaughtAt > 0 && ps.Elapsed-ps.CaughtAt < 1.35 {
