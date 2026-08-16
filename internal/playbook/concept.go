@@ -18,7 +18,7 @@ func PlaySlots() []Slot {
 		{Key: 1, Name: "Inside", Plays: []Play{byID["inside_zone"]}},
 		{Key: 2, Name: "Outside", Plays: []Play{byID["sweep"]}},
 		{Key: 3, Name: "Quick", Plays: []Play{byID["slant"], byID["hitch"]}},
-		{Key: 4, Name: "Shot", Plays: []Play{byID["post"], byID["pa_post"]}},
+		{Key: 4, Name: "Shot", Plays: []Play{byID["post"], byID["pa_post"], byID["pa_glance"]}},
 	}
 }
 
@@ -29,7 +29,7 @@ type Concept struct {
 	DropYards    float64 // QB drop; 0 = handoff
 	PlayAction   bool
 	PrimaryDepth float64 // yards past LOS for the primary
-	PrimaryBreak string  // "post", "slant", "hitch", "go"
+	PrimaryBreak string  // "post", "glance", "slant", "hitch", "go"
 }
 
 func ConceptFor(id string) (Concept, bool) {
@@ -62,6 +62,13 @@ func conceptByID() map[string]Concept {
 			PlayAction:   true,
 			PrimaryDepth: 16,
 			PrimaryBreak: "post",
+		},
+		"pa_glance": {
+			Play:         byID["pa_glance"],
+			DropYards:    3.8,
+			PlayAction:   true,
+			PrimaryDepth: 11,
+			PrimaryBreak: "glance",
 		},
 	}
 	return conceptCache

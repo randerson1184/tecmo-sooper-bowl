@@ -60,6 +60,8 @@ type Unit struct {
 	ContainSpd    float64
 	// Spy: hole player vs QB keep. Does not drop into coverage.
 	Spy bool
+	// HoleFill: Cover 2 scrape on slant. Sits the A-gap; not a named spy.
+	HoleFill bool
 
 	// Coverage assignment (defenders only). Landmark + optional man.
 	CoverJob  CoverJob

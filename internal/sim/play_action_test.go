@@ -142,8 +142,15 @@ func TestLeftoverWindowIsEarned(t *testing.T) {
 		t.Fatalf("hot leftover should beat warm (hot=%.2f warm=%.2f bite=%.2f)", hotL, warmL, hotB)
 	}
 	_, sellL, _ := computePAWindow(LineContext{RunThreat: 2.8, PassThreat: 2.5, Samples: 8, PassPct: 0.8}, "base")
-	if sellL >= hotL*0.6 {
-		t.Fatalf("pass-sell should cut leftover, not mesh (hot=%.2f sell=%.2f)", hotL, sellL)
+	if sellL >= hotL {
+		t.Fatalf("pass-sell should shave leftover (hot=%.2f sell=%.2f)", hotL, sellL)
+	}
+	if sellL < paLiveLeftMin-0.01 {
+		t.Fatalf("live run must keep a hittable leftover under pass-sell (got %.2f)", sellL)
+	}
+	_, crushL, _ := computePAWindow(LineContext{RunThreat: 0, PassThreat: 2.5, Samples: 8, PassPct: 0.8}, "run_fit")
+	if crushL >= 0.08 {
+		t.Fatalf("unearned leftover may still flatten (got %.2f)", crushL)
 	}
 	_, fitL, _ := computePAWindow(LineContext{RunThreat: 1.6, Samples: 8}, "run_fit")
 	if fitL <= warmL {
@@ -406,6 +413,173 @@ func TestHoldingPACostsPressure(t *testing.T) {
 	}
 	if paDist > postDist+0.35 {
 		t.Fatalf("holding PA should bring rushers closer (pa=%.2f post=%.2f)", paDist, postDist)
+	}
+}
+
+func TestPAGlanceReusesTheMesh(t *testing.T) {
+	play := playByID("pa_glance")
+	if play.ID != "pa_glance" {
+		t.Fatal("pa_glance missing from the book")
+	}
+	const los = 30.0
+	ps := StartSnap(los, play, defByID("base"), playbook.DefaultShell(),
+		rand.New(rand.NewSource(2)), Fatigue{}, LineContext{RunThreat: 2.0, Samples: 8})
+	if !ps.PlayAction || ps.Mesh != MeshLive {
+		t.Fatalf("glance should snap into a live mesh, playAction=%v mesh=%s", ps.PlayAction, ps.Mesh)
+	}
+	if ps.IsPostShot {
+		t.Fatal("glance must not use post wrap")
+	}
+	if ps.PrimaryIdx < 0 {
+		t.Fatal("no primary")
+	}
+	pr := ps.World.Units[ps.PrimaryIdx]
+	if !pr.HasTarget || pr.Target.Y < los+10 || pr.Target.Y > los+12.5 {
+		t.Fatalf("glance primary should sit 10–12 past the LOS, got %+v", pr.Target)
+	}
+	if math.Abs(pr.Target.X-field.HashMid) < 3.5 {
+		t.Fatalf("glance should sit beside the A-gap, not on Mike, got %+v", pr.Target)
+	}
+	if ps.LeftoverSec < 0.19 {
+		t.Fatalf("hot glance should earn leftover, got %.2f", ps.LeftoverSec)
+	}
+}
+
+func TestPAGlanceSitsBehindTheMike(t *testing.T) {
+	const los = 30.0
+	ps := StartSnap(los, playByID("pa_glance"), defByID("base"), playbook.DefaultShell(),
+		rand.New(rand.NewSource(15)), Fatigue{},
+		LineContext{RunThreat: 2.8, Samples: 8, RunPct: 0.55})
+	until := ps.MeshSec + ps.LeftoverSec*0.5
+	for i := 0; i < 40; i++ {
+		if ps.Elapsed >= until-1e-6 {
+			break
+		}
+		if !ps.Tick(1.0/60.0, Input{}) {
+			t.Fatal("glance died before leftover")
+		}
+	}
+	if ps.PrimaryIdx < 0 {
+		t.Fatal("no primary")
+	}
+	pr := ps.World.Units[ps.PrimaryIdx].Pos
+	mike := mikeY(ps)
+	if pr.Y < los+4.0 {
+		t.Fatalf("glance should be downfield at leftover, Y=%.1f los=%.1f", pr.Y, los)
+	}
+	// Beside the crash, not through the A-gap. Depth vs Mike can be close
+	// at leftover start; wrap + leftover vacancy is the gain, not a 10-yard lead.
+	if math.Abs(pr.X-field.HashMid) < 3 {
+		t.Fatalf("glance ran into the A-gap (x=%.1f mid=%.1f mikeY=%.1f prY=%.1f)", pr.X, field.HashMid, mike, pr.Y)
+	}
+}
+
+func TestPAGlanceKeepsDeepHelp(t *testing.T) {
+	const los = 30.0
+	for _, sh := range playbook.DefaultShells() {
+		ps := StartSnap(los, playByID("pa_glance"), defByID("base"), sh,
+			rand.New(rand.NewSource(2)), Fatigue{}, LineContext{})
+		assertShellInvariants(t, ps.World, sh, los)
+	}
+}
+
+func TestPAGlanceInWindowBeatsCold(t *testing.T) {
+	resolve := func(threat float64) (yards, sep, mike float64) {
+		ps := StartSnap(30, playByID("pa_glance"), defByID("base"), playbook.DefaultShell(),
+			rand.New(rand.NewSource(14)), Fatigue{},
+			LineContext{RunThreat: threat, Samples: 8, RunPct: 0.55})
+		until := ps.MeshSec + 0.12
+		if ps.LeftoverSec > 0.1 {
+			until = ps.MeshSec + ps.LeftoverSec*0.45
+		}
+		for i := 0; i < 40; i++ {
+			if ps.Elapsed >= until-1e-6 {
+				break
+			}
+			if !ps.Tick(1.0/60.0, Input{}) {
+				break
+			}
+		}
+		ps.Tick(1.0/60.0, Input{Throw: true})
+		mike = mikeY(ps)
+		sep = ps.SepAtThrow
+		for i := 0; i < 180 && ps.Alive; i++ {
+			ps.Tick(1.0/60.0, Input{})
+		}
+		return ps.Result.YardsGained, sep, mike
+	}
+	hotY, hotSep, hotMike := resolve(2.8)
+	coldY, coldSep, coldMike := resolve(0)
+	if hotMike > coldMike-0.35 {
+		t.Fatalf("hot glance leftover should still crash Mike (hot=%.1f cold=%.1f)", hotMike, coldMike)
+	}
+	if hotY+1.5 < coldY && hotSep+0.4 < coldSep {
+		t.Fatalf("in-window glance should not lose to cold (hot y=%.1f sep=%.1f / cold y=%.1f sep=%.1f)",
+			hotY, hotSep, coldY, coldSep)
+	}
+	if hotY < coldY+1.0 {
+		t.Fatalf("leftover glance should pay more than cold (hot=%.1f cold=%.1f)", hotY, coldY)
+	}
+}
+
+func TestPAGlanceColdIsNotAHouse(t *testing.T) {
+	var yards []float64
+	for seed := int64(20); seed < 32; seed++ {
+		ps := StartSnap(30, playByID("pa_glance"), defByID("base"), playbook.DefaultShell(),
+			rand.New(rand.NewSource(seed)), Fatigue{}, LineContext{Samples: 8})
+		for i := 0; i < 28; i++ { // ~0.47s — leftover timing, no leftover
+			if i == 26 {
+				ps.Tick(1.0/60.0, Input{Throw: true})
+				continue
+			}
+			if !ps.Tick(1.0/60.0, Input{}) {
+				break
+			}
+		}
+		for i := 0; i < 180 && ps.Alive; i++ {
+			ps.Tick(1.0/60.0, Input{})
+		}
+		if ps.Result.Outcome == OutcomeIncomplete || ps.Result.Outcome == OutcomeSack {
+			continue
+		}
+		yards = append(yards, ps.Result.YardsGained)
+	}
+	if len(yards) < 4 {
+		t.Fatalf("need some cold glance catches, got %d", len(yards))
+	}
+	sum := 0.0
+	for _, y := range yards {
+		sum += y
+		if y >= 12.5 {
+			t.Fatalf("cold glance should not be a 12-yard button (got %.1f in %v)", y, yards)
+		}
+	}
+	avg := sum / float64(len(yards))
+	if avg > 9.5 {
+		t.Fatalf("cold glance avg should sit ~6–8, got %.1f %v", avg, yards)
+	}
+}
+
+func TestPAGlanceSpyAndRushersNeverBite(t *testing.T) {
+	ps := StartSnap(30, playByID("pa_glance"), defByID("blitz"), playbook.DefaultShell(),
+		rand.New(rand.NewSource(6)), Fatigue{},
+		LineContext{RunThreat: 2.8, KeepThreat: 2.2, Samples: 8, RunPct: 0.5})
+	for i := 0; i < 22; i++ {
+		ps.Tick(1.0/60.0, Input{})
+	}
+	for _, id := range ps.BiterIDs {
+		if strings.HasPrefix(id, "DL#") {
+			t.Fatalf("DL bit glance: %v", ps.BiterIDs)
+		}
+	}
+	if spyIdx := SpyIndex(ps.World); spyIdx >= 0 {
+		want := fmt.Sprintf("LB#%d", ps.World.Units[spyIdx].ID)
+		alt := fmt.Sprintf("S#%d", ps.World.Units[spyIdx].ID)
+		for _, id := range ps.BiterIDs {
+			if id == want || id == alt {
+				t.Fatalf("spy bit glance: %v", ps.BiterIDs)
+			}
+		}
 	}
 }
 

@@ -17,8 +17,10 @@ type Entry struct {
 	OffPlay    string    `json:"off_play"` // inside_zone, sweep, slant, hitch
 	OffName    string    `json:"off_name"`
 	DefCall    string    `json:"def_call"` // base, run_fit, ... (front)
-	Shell      string    `json:"shell"`    // cover3, cover2, man_free
-	Outcome    string    `json:"outcome"`  // tackle, incomplete, td, ...
+	Shell      string    `json:"shell"`    // cover3, cover2, man_free (live)
+	Look       string    `json:"look,omitempty"`
+	Disguised  bool      `json:"disguised"`
+	Outcome    string    `json:"outcome"` // tackle, incomplete, td, ...
 	Yards      float64   `json:"yards"`
 	DownBefore int       `json:"down_before"`
 	DistBefore float64   `json:"dist_before"`

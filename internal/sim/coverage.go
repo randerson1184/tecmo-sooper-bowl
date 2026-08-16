@@ -79,6 +79,78 @@ func AssignCoverage(w *World, shell playbook.CoverageShell, los float64, primary
 	_ = primaryIdx
 }
 
+// HighSafetyCount is the pre-snap picture: 1-high vs 2-high.
+func HighSafetyCount(w *World, los float64) int {
+	if w == nil {
+		return 0
+	}
+	n := 0
+	for _, u := range w.Units {
+		if u.Side == SideDefense && u.Role == RoleS && u.Pos.Y >= los+12 {
+			n++
+		}
+	}
+	return n
+}
+
+// shadeLookPicture paints the pre-snap look by role, not by live job —
+// so a Cover 2 call can still show 1-high.
+func shadeLookPicture(w *World, look playbook.CoverageShell, los float64) {
+	if w == nil || look.ID == "" {
+		return
+	}
+	var cbs, safeties []int
+	for i, u := range w.Units {
+		if u.Side != SideDefense {
+			continue
+		}
+		switch u.Role {
+		case RoleCB:
+			cbs = append(cbs, i)
+		case RoleS:
+			safeties = append(safeties, i)
+		}
+	}
+	sortByX(w, cbs)
+	sortByX(w, safeties)
+	mid := field.HashMid
+	switch look.ID {
+	case playbook.ShellCover2:
+		if len(safeties) >= 1 {
+			w.Units[safeties[0]].Pos = field.Clamp(field.Pos{X: mid - 8, Y: los + 13.5})
+		}
+		if len(safeties) >= 2 {
+			w.Units[safeties[1]].Pos = field.Clamp(field.Pos{X: mid + 8, Y: los + 13.5})
+		}
+		for _, i := range cbs {
+			w.Units[i].Pos.Y = los + 4.0
+			w.Units[i].Pos = field.Clamp(w.Units[i].Pos)
+		}
+	case playbook.ShellManFree:
+		if len(safeties) >= 1 {
+			w.Units[safeties[0]].Pos = field.Clamp(field.Pos{X: mid, Y: los + 14.5})
+		}
+		if len(safeties) >= 2 {
+			w.Units[safeties[1]].Pos = field.Clamp(field.Pos{X: mid + 4, Y: los + 10.5})
+		}
+		for _, i := range cbs {
+			w.Units[i].Pos.Y = los + 1.3
+			w.Units[i].Pos = field.Clamp(w.Units[i].Pos)
+		}
+	default: // Cover 3: one high, corners off
+		if len(safeties) >= 1 {
+			w.Units[safeties[0]].Pos = field.Clamp(field.Pos{X: mid, Y: los + 14.5})
+		}
+		if len(safeties) >= 2 {
+			w.Units[safeties[1]].Pos = field.Clamp(field.Pos{X: mid + 4, Y: los + 10.5})
+		}
+		for _, i := range cbs {
+			w.Units[i].Pos.Y = los + 8.2
+			w.Units[i].Pos = field.Clamp(w.Units[i].Pos)
+		}
+	}
+}
+
 // AlignDefense writes coverage jobs and the pre-snap picture onto a placed world.
 func AlignDefense(w *World, def playbook.DefenseCall, shell playbook.CoverageShell, los float64) {
 	if w == nil {

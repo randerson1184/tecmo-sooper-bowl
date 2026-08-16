@@ -212,13 +212,90 @@ func (ps *PlayState) declareKeep() {
 	qb := ps.World.Units[ps.QBIdx]
 	// A dropback sits *behind* the LOS. A keep is north through it.
 	if qb.Pos.Y >= ps.LOS+0.05 {
-		ps.QBKeep = true
-		ps.freeSpyToTackle()
+		ps.commitKeep()
 		return
 	}
 	if ps.Elapsed >= 0.5 && qb.Pos.Y >= ps.LOS-0.35 && qb.VY > 2.5 {
-		ps.QBKeep = true
-		ps.freeSpyToTackle()
+		ps.commitKeep()
+		return
+	}
+	// Slant keep declares a beat earlier — mash-up was crossing before the scrape.
+	if ps.Play.ID == "slant" && ps.Elapsed >= 0.30 && qb.Pos.Y >= ps.LOS-1.1 && qb.VY > 2.2 {
+		ps.commitKeep()
+	}
+}
+
+func (ps *PlayState) commitKeep() {
+	ps.QBKeep = true
+	ps.freeSpyToTackle()
+	ps.scrapeKeepHole()
+}
+
+// shadeKeepHole sits the Mike in the A-gap on Cover 2 slants so a keep
+// is not a vacant draw. Not a dedicated Spy — first-down Cover 3 stays clean.
+func shadeKeepHole(w *World, los float64, shell playbook.CoverageShell) {
+	if w == nil || shell.ID != playbook.ShellCover2 {
+		return
+	}
+	idx := closestHookLB(w)
+	if idx < 0 {
+		return
+	}
+	u := &w.Units[idx]
+	if u.Spy || u.RushFree {
+		return
+	}
+	u.HoleFill = true
+	u.CoverJob = CoverHook
+	u.CoverMan = -1
+	u.CoverLand = field.Pos{X: field.HashMid, Y: los + 5.0}
+	u.Pos = u.CoverLand
+	u.Pos = field.Clamp(u.Pos)
+	u.Engaged = 0
+}
+
+func closestHookLB(w *World) int {
+	best, bestD := -1, 1e9
+	for i, u := range w.Units {
+		if u.Side != SideDefense || u.Role != RoleLB {
+			continue
+		}
+		if u.CoverJob != CoverHook && u.CoverJob != CoverNone {
+			// Prefer hook; allow a box LB with no job.
+			if u.CoverJob.IsDeep() || u.CoverJob.IsFlat() || u.CoverJob == CoverMan {
+				continue
+			}
+		}
+		d := math.Abs(u.Pos.X - field.HashMid)
+		if d < bestD {
+			bestD, best = d, i
+		}
+	}
+	return best
+}
+
+// scrapeKeepHole unblocks the hole player so react-on-commit can finish.
+func (ps *PlayState) scrapeKeepHole() {
+	idx := SpyIndex(ps.World)
+	if idx < 0 {
+		for i, u := range ps.World.Units {
+			if u.HoleFill {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx < 0 {
+		idx = closestHookLB(ps.World)
+	}
+	if idx < 0 {
+		return
+	}
+	ps.World.Units[idx].Engaged = 0
+	for i := range ps.World.Units {
+		if ps.World.Units[i].BlockTarget == idx {
+			ps.World.Units[i].BlockTarget = -1
+		}
 	}
 }
 

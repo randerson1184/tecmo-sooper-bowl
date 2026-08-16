@@ -62,12 +62,14 @@ type Result struct {
 
 // PlayState is one live snap.
 type PlayState struct {
-	World *World
-	Play  playbook.Play
-	Def   playbook.DefenseCall
-	Shell playbook.CoverageShell
-	Line  LineContext
-	LOS   float64
+	World     *World
+	Play      playbook.Play
+	Def       playbook.DefenseCall
+	Shell     playbook.CoverageShell
+	Look      playbook.CoverageShell
+	Disguised bool
+	Line      LineContext
+	LOS       float64
 
 	// Player-controlled unit index into World.Units (-1 if none).
 	ControlIdx int
@@ -164,11 +166,19 @@ func StartPlay(los float64, play playbook.Play, def playbook.DefenseCall, rng *r
 
 // StartSnap is StartPlay with an explicit coverage shell (front and shell are independent).
 func StartSnap(los float64, play playbook.Play, def playbook.DefenseCall, shell playbook.CoverageShell, rng *rand.Rand, fat Fatigue, line LineContext) *PlayState {
+	return StartSnapLook(los, play, def, shell, shell, rng, fat, line)
+}
+
+// StartSnapLook is StartSnap with a pre-snap picture that may differ from the live shell.
+func StartSnapLook(los float64, play playbook.Play, def playbook.DefenseCall, shell, look playbook.CoverageShell, rng *rand.Rand, fat Fatigue, line LineContext) *PlayState {
 	if rng == nil {
 		rng = rand.New(rand.NewSource(1))
 	}
 	if shell.ID == "" {
 		shell = playbook.DefaultShell()
+	}
+	if look.ID == "" {
+		look = shell
 	}
 	w := PlacePreSnap(los)
 	ps := &PlayState{
@@ -176,6 +186,8 @@ func StartSnap(los float64, play playbook.Play, def playbook.DefenseCall, shell 
 		Play:       play,
 		Def:        def,
 		Shell:      shell,
+		Look:       look,
+		Disguised:  look.ID != shell.ID,
 		Line:       line,
 		LOS:        los,
 		ControlIdx: -1,
@@ -268,9 +280,16 @@ func StartSnap(los float64, play playbook.Play, def playbook.DefenseCall, shell 
 	// Assign primary receiver: first WR matching play side preference.
 	ps.PrimaryIdx = pickPrimary(w, play)
 	AssignCoverage(w, shell, los, ps.PrimaryIdx)
+	// Jobs are the live shell; positions stay on the look so they rotate after the snap.
+	if look.ID != shell.ID {
+		shadeLookPicture(w, look, los)
+	}
 	if play.Type == playbook.PlayPass {
 		assignPassPro(w, def)
 		assignQBSpy(w, los, def, line)
+		if play.ID == "slant" {
+			shadeKeepHole(w, los, shell)
+		}
 	}
 
 	if play.Type == playbook.PlayRun {
@@ -497,15 +516,12 @@ func setSweepContain(w *World, def playbook.DefenseCall, shell playbook.Coverage
 	// Base + Cover 3 still gives the stretch a chance to bounce.
 	light := def.ID == "pass_rush" || def.ID == "soft_zone" || def.ID == "blitz"
 	if light && (shell.ID == playbook.ShellCover3 || shell.ID == playbook.ShellManFree) {
-		if alley > 14.2 {
-			alley = 14.2
-		}
-		if step > -0.7 {
-			step = -0.7
-		}
-		if spd < 1.10 {
-			spd = 1.10
-		}
+		alley = 13.0
+		spd = 1.14
+		// Hook depth is +10. Walk the edge down to the LOS — the +55 leak
+		// was a contain standing in the hook while the stretch turned up.
+		u.Pos.Y = w.Ball.Y + 2.2
+		step = 0
 	}
 	if u.CoverJob.IsDeep() {
 		step = -8.0
@@ -514,7 +530,9 @@ func setSweepContain(w *World, def playbook.DefenseCall, shell playbook.Coverage
 		}
 	}
 	u.Pos.X = field.HashMid + alley
-	u.Pos.Y += step
+	if step != 0 {
+		u.Pos.Y += step
+	}
 	u.Speed *= spd
 	u.BaseSpeed = u.Speed
 	u.ContainForceX = field.HashMid + alley
@@ -696,12 +714,27 @@ func pickPrimary(w *World, play playbook.Play) int {
 func conceptRoute(u *Unit, isPrimary bool, los float64, c playbook.Concept) (tx, ty float64) {
 	tx, ty = u.Pos.X, los+c.PrimaryDepth
 	if !isPrimary {
-		// Clear-out vertical so the post has air.
-		return u.Pos.X, los + c.PrimaryDepth + 6
+		// Clear-out vertical so the primary has air.
+		clear := c.PrimaryDepth + 6
+		if c.PrimaryBreak == "glance" {
+			clear = 16
+		}
+		return u.Pos.X, los + clear
 	}
 	switch c.PrimaryBreak {
 	case "post":
 		return field.HashMid, los + c.PrimaryDepth
+	case "glance":
+		// Hook sit beside the A-gap — behind the crashing Mike, not through him.
+		x := u.Pos.X
+		if math.Abs(x-field.HashMid) < 4 {
+			if x >= field.HashMid {
+				x = field.HashMid + 6
+			} else {
+				x = field.HashMid - 6
+			}
+		}
+		return x, los + c.PrimaryDepth
 	default:
 		return tx, ty
 	}
@@ -894,7 +927,7 @@ func (ps *PlayState) Tick(dt float64, in Input) bool {
 				if ctrl.JukeTimer > 0 {
 					speed *= 1.15
 				}
-				if ps.HitchGather > 0 && ctrl.Role == RoleWR {
+				if ps.HitchGather > 0 && (ctrl.Role == RoleWR || ps.isGlance()) {
 					speed *= 0.68 // plant and turn, not a free burst
 				}
 				ix, iy := in.DX, in.DY
@@ -1087,6 +1120,9 @@ func (ps *PlayState) tryThrow() {
 			if ps.Play.DepthLabel == "intermediate" {
 				lead = 0.7
 			}
+			if ps.HasConcept && ps.Concept.PrimaryBreak == "glance" {
+				lead = 0.16 // sit throw — don't lead it into a 12-yard shot
+			}
 			aim.X = recv.Pos.X + (tdx/tdist)*recv.Speed*lead
 			aim.Y = recv.Pos.Y + (tdy/tdist)*recv.Speed*lead
 		}
@@ -1208,7 +1244,7 @@ func (ps *PlayState) checkPassArrival(dt float64) {
 			ps.ControlIdx = ps.BallTarget
 			ps.BallTarget = -1
 			ps.CaughtAt = ps.Elapsed
-			if ps.Play.ID == "hitch" {
+			if ps.Play.ID == "hitch" || ps.isGlance() {
 				ps.HitchGather = 0.32
 			}
 		} else {
@@ -1288,9 +1324,13 @@ func (ps *PlayState) aiOffense(i int, dt float64) {
 
 	// Move toward route target
 	if u.HasTarget {
-		moveToward(u, u.Target, u.Speed*0.85)
-		// Hitch: stop near target
-		if ps.Play.ID == "hitch" && u.Role == RoleWR {
+		spd := u.Speed * 0.85
+		if ps.glanceStem(i) {
+			spd = u.Speed * glanceStemMult
+		}
+		moveToward(u, u.Target, spd)
+		// Hitch / glance: sit near the landmark
+		if (ps.Play.ID == "hitch" && u.Role == RoleWR) || ps.glanceSit(i) {
 			if math.Hypot(u.Pos.X-u.Target.X, u.Pos.Y-u.Target.Y) < 1.2 {
 				u.VX, u.VY = 0, 0
 			}
@@ -1565,7 +1605,15 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 		}
 
 		if ps.QBKeep && u.Spy {
-			moveToward(u, bp, spd*1.32)
+			moveToward(u, bp, spd*1.38)
+			return
+		}
+		if ps.QBKeep && (u.HoleFill || (u.Role == RoleLB && (u.CoverJob == CoverHook || math.Abs(u.Pos.X-field.HashMid) < 5))) {
+			burst := 1.28
+			if u.HoleFill {
+				burst = 1.42
+			}
+			moveToward(u, bp, spd*burst)
 			return
 		}
 
@@ -1578,6 +1626,11 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 			}
 			if ps.Def.ID == "run_fit" && bp.X > forceX {
 				forceX = bp.X + 1.6
+			}
+			// Cover 3 / light: squeeze if they bounce outside the stored alley.
+			light := ps.Def.ID == "pass_rush" || ps.Def.ID == "soft_zone" || ps.Def.ID == "blitz"
+			if light && (ps.Shell.ID == playbook.ShellCover3 || ps.Shell.ID == playbook.ShellManFree) && bp.X > forceX {
+				forceX = bp.X + 1.3
 			}
 			// Set the edge at the LOS — do not chase into the backfield and stuff every stretch.
 			ty := bp.Y + 0.2
@@ -1604,6 +1657,9 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 					spd *= 1.18
 				}
 			}
+		}
+		if wr := ps.glanceWrapSpeed(u); wr != 1 {
+			spd *= wr
 		}
 		// Slant YAC: man and hook wrap; deep thirds stay home.
 		if ps.Play.ID == "slant" && ps.CaughtAt > 0 && !u.CoverJob.IsDeep() {
@@ -1871,6 +1927,11 @@ func (ps *PlayState) checkDeadBall() {
 				tackleR = 1.55
 			}
 		}
+		if wr := ps.glanceWrapRadius(); wr > 0 {
+			if wr > tackleR {
+				tackleR = wr
+			}
+		}
 		if ps.isPostShot() && ps.CaughtAt > 0 && ps.Elapsed-ps.CaughtAt < 1.4 {
 			switch ps.Shell.ID {
 			case playbook.ShellCover2:
@@ -1886,7 +1947,7 @@ func (ps *PlayState) checkDeadBall() {
 				continue
 			}
 			// Engaged defenders shed into tackles as the timer runs out
-			if u.Engaged > 0.2 && !u.Spy {
+			if u.Engaged > 0.2 && !u.Spy && !u.HoleFill {
 				continue
 			}
 			r := tackleR
@@ -1894,11 +1955,17 @@ func (ps *PlayState) checkDeadBall() {
 				r *= 0.85 // partial shed
 			}
 			if ps.QBKeep {
-				if u.Spy {
-					r = 1.68
+				if u.Spy || u.HoleFill {
+					r = 1.74
 				} else if u.Role == RoleLB || u.Role == RoleDL {
-					if r < 1.45 {
-						r = 1.45
+					if r < 1.50 {
+						r = 1.50
+					}
+				}
+				if (ps.Shell.ID == playbook.ShellCover2 || ps.Def.ID == "base") &&
+					(u.Role == RoleLB || u.CoverJob == CoverHook) {
+					if r < 1.64 {
+						r = 1.64
 					}
 				}
 			}
@@ -1915,10 +1982,14 @@ func (ps *PlayState) checkDeadBall() {
 					r = 1.55
 				}
 				if ps.Def.ID == "pass_rush" || ps.Def.ID == "soft_zone" {
-					r = 1.52
+					r = 1.58
 				}
 				if ps.Shell.ID == playbook.ShellCover2 {
 					r = 1.58
+				}
+				if (ps.Def.ID == "pass_rush" || ps.Def.ID == "soft_zone") &&
+					ps.Shell.ID == playbook.ShellCover3 {
+					r = 1.64
 				}
 			}
 			if ps.isPostShot() && ps.CaughtAt > 0 && (u.CoverJob.IsDeep() || u.CoverJob == CoverHook) {

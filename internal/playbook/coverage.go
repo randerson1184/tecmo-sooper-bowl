@@ -36,13 +36,40 @@ func DefaultShells() []CoverageShell {
 }
 
 // Package is one defensive call: a front/pressure plus a coverage shell.
+// Look is the pre-snap picture. When Disguised, Look != Shell and they rotate after the snap.
 type Package struct {
-	Front DefenseCall
-	Shell CoverageShell
+	Front     DefenseCall
+	Shell     CoverageShell
+	Look      CoverageShell
+	Disguised bool
 }
 
 func (p Package) String() string {
+	if p.Disguised && p.Look.ID != "" && p.Look.ID != p.Shell.ID {
+		return p.Front.Name + " / " + p.Look.Name + " → " + p.Shell.Name
+	}
 	return p.Front.Name + " / " + p.Shell.Name
+}
+
+func (p Package) LookOrShell() CoverageShell {
+	if p.Look.ID != "" {
+		return p.Look
+	}
+	return p.Shell
+}
+
+// DisguiseAs returns the picture this live shell fakes. Empty ID = cannot fake.
+func DisguiseAs(live CoverageShell) CoverageShell {
+	switch live.ID {
+	case ShellCover2:
+		return ShellByID(ShellCover3) // show 1-high, play 2-high
+	case ShellCover3:
+		return ShellByID(ShellCover2) // show 2-high, play 1-high
+	case ShellManFree:
+		return ShellByID(ShellCover3) // show off, play press
+	default:
+		return CoverageShell{}
+	}
 }
 
 func (p Package) FrontID() string {

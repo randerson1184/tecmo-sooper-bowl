@@ -10,8 +10,9 @@ func TestPlaySlotsAreExplicit(t *testing.T) {
 	if slots[2].Name != "Quick" || slots[2].Plays[0].ID != "slant" || slots[2].Plays[1].ID != "hitch" {
 		t.Fatalf("slot 3 should be slant/hitch, got %+v", slots[2])
 	}
-	if slots[3].Name != "Shot" || slots[3].Plays[0].ID != "post" || slots[3].Plays[1].ID != "pa_post" {
-		t.Fatalf("slot 4 should be post / PA post, got %+v", slots[3])
+	if slots[3].Name != "Shot" || slots[3].Plays[0].ID != "post" ||
+		slots[3].Plays[1].ID != "pa_post" || slots[3].Plays[2].ID != "pa_glance" {
+		t.Fatalf("slot 4 should be post / PA post / PA glance, got %+v", slots[3])
 	}
 	for _, s := range slots {
 		for _, p := range s.Plays {
@@ -42,5 +43,21 @@ func TestPAPostIsAlwaysCallable(t *testing.T) {
 	}
 	if !c.PlayAction || c.PrimaryBreak != "post" || c.PrimaryDepth < 14 {
 		t.Fatalf("PA post is not a play-action shot: %+v", c)
+	}
+}
+
+func TestPAGlanceSitsOverTheMike(t *testing.T) {
+	c, ok := ConceptFor("pa_glance")
+	if !ok {
+		t.Fatal("pa_glance concept missing")
+	}
+	if !c.PlayAction || c.PrimaryBreak != "glance" {
+		t.Fatalf("PA glance should reuse the mesh: %+v", c)
+	}
+	if c.PrimaryDepth < 10 || c.PrimaryDepth > 12 {
+		t.Fatalf("glance should sit 10–12 yards over the Mike, got %.1f", c.PrimaryDepth)
+	}
+	if c.PrimaryDepth >= 14 {
+		t.Fatal("glance must not be another post")
 	}
 }

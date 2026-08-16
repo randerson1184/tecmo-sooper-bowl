@@ -9,6 +9,39 @@ import (
 	"github.com/randerson1184/tecmo-sooper-bowl/internal/playbook"
 )
 
+func TestDisguiseKeepsLiveJobsAndLookPicture(t *testing.T) {
+	const los = 30.0
+	live := playbook.ShellByID(playbook.ShellCover2)
+	look := playbook.ShellByID(playbook.ShellCover3)
+	w := PlacePreSnap(los)
+	AlignDefense(w, defByID("base"), look, los)
+	if HighSafetyCount(w, los) != 1 {
+		t.Fatalf("Cover 3 look should be 1-high, got %d", HighSafetyCount(w, los))
+	}
+	ps := StartSnapLook(los, playByID("slant"), defByID("base"), live, look,
+		rand.New(rand.NewSource(2)), Fatigue{}, LineContext{})
+	assertShellInvariants(t, ps.World, live, los)
+	if HighSafetyCount(ps.World, los) != 1 {
+		t.Fatalf("at snap the picture should still be the look (1-high), got %d", HighSafetyCount(ps.World, los))
+	}
+	if !ps.Disguised {
+		t.Fatal("expected disguised snap")
+	}
+}
+
+func TestHonestSnapMatchesTheShellPicture(t *testing.T) {
+	const los = 30.0
+	c2 := playbook.ShellByID(playbook.ShellCover2)
+	ps := StartSnap(los, playByID("slant"), defByID("base"), c2,
+		rand.New(rand.NewSource(2)), Fatigue{}, LineContext{})
+	if HighSafetyCount(ps.World, los) < 2 {
+		t.Fatalf("honest Cover 2 should be 2-high, got %d", HighSafetyCount(ps.World, los))
+	}
+	if ps.Disguised {
+		t.Fatal("StartSnap without a look should not disguise")
+	}
+}
+
 func TestCoverageInvariantsEveryShellAndPlay(t *testing.T) {
 	shells := playbook.DefaultShells()
 	plays := playbook.DefaultOffense()

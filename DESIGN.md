@@ -127,7 +127,28 @@ Blown coverages become **rare failures of tradeoffs**, not “everyone chase the
 
 ### 6.4 Player-facing feedback
 
-HUD hides the named call. The player reads four pictures — one-high corners off (Cover 3), one-high press (Man Free), two-high corners squat (Cover 2), two-high press later (Cover 2 man). **D** names the call for debug. Occasional disguise is still later.
+HUD hides the named call. The player reads four pictures — one-high corners off (Cover 3), one-high press (Man Free), two-high corners squat (Cover 2), two-high press later (Cover 2 man). **D** names the call; when they lie it prints `look → live`.
+
+### 6.5 Disguise (staff quality)
+
+Same pre-snap picture, different post-snap shell. Front is never faked.
+
+| Live | Fake look |
+|------|-----------|
+| Cover 2 | 1-high (Cover 3) |
+| Cover 3 | 2-high (Cover 2) |
+| Man Free | 1-high off (Cover 3) |
+
+`ai.Staff.Disguise` is 0..1. **Poor teams = 0 (never).** Elite = 1 (~30% of snaps). This roster is the **baseline (0.40, ~15%)**. Jobs are the live shell; positions start on the look and rotate after the snap. Team tiers later just hang a number on the roster.
+
+### 6.6 Film notes (2026-08-15/16)
+
+- **`runT` is success, not volume.** A run scores only if it gains ≥ 4 (or a TD). `run%` is how often you handed off. Stuffed IZ into Run Fit drives `runT` to 0.
+- **PA leftover** is mesh (0.22s) + leftover. Cold leftover = 0. Warm (`runT≥1.5`) = 0.24. Hot (`≥2.5`) = 0.36. Run Fit +0.08. Live run vetoes pass-sell crush (floor 0.20). Cap is **0.36** (0.44 with Run Fit).
+- **PA Glance:** leftover sit behind the Mike. Cold *early* (~0.40s) is a 6–8 yard stop; **holding glance is still a 12-yard post.**
+- **Sweep vs Cover 3 / light box** is closed (contain at LOS+2.2, squeezes bounce). Correct stretch still gains; not a +55 walk-off.
+- **Slant keep vs Cover 2:** hole player holds the A-gap. Freelance ~+6–8 median. Thrown slant vs press stays the give.
+- **Remember, don’t patch unless they loop:** IZ crease vs Man Free / base; Post / PA Post vs Cover 2 if you hold it; glance if you hold it.
 
 ![Pre-snap: named call hidden, one-high look](docs/presnap-look.png)
 
@@ -204,6 +225,8 @@ PreSnap → SelectPlay → Snap → ResolvePlay (ticks) → DeadBall → UpdateT
 - [x] Readable pre-snap pictures; named call hidden (**D** reveals `Front / Shell`)  
 - [x] Pass-pro assignments + pocket budget (success/threat, not just RunPct)  
 - [x] Sweep contain on every front, including light boxes and blitz (Run Fit is stronger, not the only edge)  
+- [x] Cover 3 / light-box sweep: contain walks down to the LOS and squeezes if they bounce outside  
+- [x] Slant keep vs Cover 2: hole player holds the A-gap and finishes the tackle (not a first-down Cover 3 spy)  
 - [x] Post YAC: deep halves wrap so a Cover 2 shot is not a house  
 - [x] Pass-heavy looks do not light the box if `RunThreat` or `KeepThreat` is live  
 - [x] QB-keep / scramble: spy in the hole; keep flips coverage to run pursuit; tagged for game-plan  
@@ -211,7 +234,9 @@ PreSnap → SelectPlay → Snap → ResolvePlay (ticks) → DeadBall → UpdateT
 - [x] Shift+4 play-action post (callable anytime; run success changes bite, not availability)  
 - [x] PA mesh is a real state (buffer throw / abort fake / bite only after a committed mesh)  
 - [x] PA leftover window: cold recovers when the mesh ends; a live run (or Run Fit) keeps them down after; pass-sell cuts leftover, not the fake  
-- [ ] Occasional disguise (same picture, different post-snap)  
+- [x] Live `RunThreat` vetoes leftover crush the same way it vetoes lighting the box (pass-sell only shaves; floor ~0.20s)  
+- [x] PA glance (Shift+4): sit beside/behind leftover Mike; wrap so cold is a 6–8 yard stop, leftover is the 11-yard shot  
+- [x] Occasional disguise (same picture, different post-snap); staff `Disguise` 0 = never, 1 = elite (~30%)  
 
 ### Phase 4 — Content & juice
 
@@ -274,4 +299,4 @@ Graphics may be rectangles. Fun > fidelity.
 
 ---
 
-*Next: playtest leftover window — cold PA vs PA after runs vs abort vs run-fit / pass-sell. Film `leftover_sec` vs `release_at`. Holding past the window should risk a sack.*
+*Next: team tiers hang `Staff.Disguise` on the roster (poor = 0, elite = 1). Optional honesty: glance sit-means-sit if hold stays a house; IZ vs Man Free crease if it loops.*

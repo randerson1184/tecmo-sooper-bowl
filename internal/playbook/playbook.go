@@ -37,6 +37,7 @@ func DefaultOffense() []Play {
 		{ID: "hitch", Name: "Hitch", Type: PlayPass, Side: SideRight, DepthLabel: "short", Description: "Stop route on the outside"},
 		{ID: "post", Name: "Post", Type: PlayPass, Side: SideMiddle, DepthLabel: "intermediate", Description: "Stem vertical, break to the post ~16 yards"},
 		{ID: "pa_post", Name: "PA Post", Type: PlayPass, Side: SideMiddle, DepthLabel: "intermediate", Description: "Fake inside zone, throw the post. Always callable."},
+		{ID: "pa_glance", Name: "PA Glance", Type: PlayPass, Side: SideMiddle, DepthLabel: "short", Description: "Fake inside zone, throw the glance over the Mike. Always callable."},
 	}
 }
 

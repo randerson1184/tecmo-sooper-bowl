@@ -320,6 +320,37 @@ func TestCover3PassRushContainIsNearTheLOS(t *testing.T) {
 	}
 }
 
+func TestSweepVsSoftZoneCover3IsNotAHouseCall(t *testing.T) {
+	// Film: +38 then +55 vs Cover 3 / soft — contain stood in the hook.
+	play := playByID("sweep")
+	def := defByID("soft_zone")
+	shell := playbook.ShellByID(playbook.ShellCover3)
+	house := 0
+	const n = 30
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 77))
+		ps := StartSnap(30, play, def, shell, rng, Fatigue{}, LineContext{})
+		idx := SweepContainIndex(ps.World)
+		if idx < 0 {
+			t.Fatal("soft+cover3 missing contain")
+		}
+		if ps.World.Units[idx].Pos.Y > 30+4.0 {
+			t.Fatalf("contain still at hook depth: y=%.1f", ps.World.Units[idx].Pos.Y)
+		}
+		for i := 0; i < 60*8; i++ {
+			if !ps.Tick(1.0/60.0, Input{DX: 0.4, DY: 1}) {
+				break
+			}
+		}
+		if ps.Result.YardsGained >= 20 {
+			house++
+		}
+	}
+	if house > 5 {
+		t.Fatalf("sweep vs soft_zone+cover3 still a house call: %d/%d were 20+", house, n)
+	}
+}
+
 func TestSweepVsPassRushCover3IsNotAHouseCall(t *testing.T) {
 	play := playByID("sweep")
 	def := defByID("pass_rush")

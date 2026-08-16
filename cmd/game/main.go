@@ -55,17 +55,22 @@ type App struct {
 	plays   *logplay.Logger
 
 	// Snapshot at snap for the log (before result mutates match).
-	snapDown  int
-	snapDist  float64
-	snapBall  float64
-	snapDef   playbook.DefenseCall
-	snapShell playbook.CoverageShell
-	snapPlay  playbook.Play
-	snapSit   game.SituationClass
+	snapDown      int
+	snapDist      float64
+	snapBall      float64
+	snapDef       playbook.DefenseCall
+	snapShell     playbook.CoverageShell
+	snapLook      playbook.CoverageShell
+	snapDisguised bool
+	snapPlay      playbook.Play
+	snapSit       game.SituationClass
 
 	deadBallTimer float64
 	loggedPlay    bool // true once this dead-ball result has been written
 	showCall      bool // debug: name the front / shell
+	staff         ai.Staff
+	look          playbook.CoverageShell
+	disguised     bool
 }
 
 func newApp() *App {
@@ -89,7 +94,8 @@ func newApp() *App {
 			PadBottom: 20,
 			PadX:      16,
 		},
-		cam: render.NewCamera(),
+		cam:   render.NewCamera(),
+		staff: ai.DefaultStaff(),
 	}
 	a.slotI = 0
 	a.varI = 0
@@ -104,14 +110,20 @@ func newApp() *App {
 }
 
 func (a *App) repickDefense() {
-	pkg := ai.ChoosePackage(a.match.Situation(), a.tracker.Snapshot(), a.rng)
+	pkg := ai.ChooseStaffPackage(a.match.Situation(), a.tracker.Snapshot(), a.staff, a.rng)
 	a.defense = pkg.Front
 	a.shell = pkg.Shell
+	a.look = pkg.LookOrShell()
+	a.disguised = pkg.Disguised
 }
 
 func (a *App) placeLook() *sim.World {
 	w := sim.PlacePreSnap(a.match.LineOfScrimmage)
-	sim.AlignDefense(w, a.defense, a.shell, a.match.LineOfScrimmage)
+	look := a.look
+	if look.ID == "" {
+		look = a.shell
+	}
+	sim.AlignDefense(w, a.defense, look, a.match.LineOfScrimmage)
 	return w
 }
 
@@ -119,7 +131,7 @@ func (a *App) defLabel() string {
 	if !a.showCall {
 		return "look"
 	}
-	return playbook.Package{Front: a.defense, Shell: a.shell}.String()
+	return playbook.Package{Front: a.defense, Shell: a.shell, Look: a.look, Disguised: a.disguised}.String()
 }
 
 func (a *App) currentPlay() playbook.Play {
@@ -292,11 +304,17 @@ func (a *App) snap() {
 	a.snapBall = a.match.BallY
 	a.snapDef = a.defense
 	a.snapShell = a.shell
+	a.snapLook = a.look
+	a.snapDisguised = a.disguised
 	a.snapPlay = p
 	a.snapSit = a.match.Situation()
 	a.loggedPlay = false
 
-	a.play = sim.StartSnap(a.match.LineOfScrimmage, p, a.defense, a.shell, a.rng, a.fatigue, a.lineCtx())
+	look := a.look
+	if look.ID == "" {
+		look = a.shell
+	}
+	a.play = sim.StartSnapLook(a.match.LineOfScrimmage, p, a.defense, a.shell, look, a.rng, a.fatigue, a.lineCtx())
 	a.world = a.play.World
 	a.match.Phase = game.PhaseInPlay
 	a.cam.SetTarget(a.world.Ball, render.ScaleLive)
@@ -314,6 +332,8 @@ func (a *App) snap() {
 		a.tip = "POST — drop, SPACE when primary breaks ~16 · green ring"
 	case "pa_post":
 		a.tip = "PA POST — mesh first (SPACE buffers) · SHIFT aborts the fake"
+	case "pa_glance":
+		a.tip = "PA GLANCE — mesh, then SPACE in the WINDOW over the Mike"
 	default:
 		a.tip = "Arrows move · SPACE throw · SHIFT juke"
 	}
@@ -408,8 +428,12 @@ func (a *App) beginDeadBall() {
 	}
 	a.fatigue.OnPlayEnd(role, r.YardsGained, wasPass, incomplete)
 
-	a.tip = fmt.Sprintf("%s  |  %+.1f yds  |  STA %d%%  |  was %s",
-		r.Message, r.YardsGained, int(a.fatigue.Display(sim.RoleRB)*100), a.snapDef.Name)
+	relTip := ""
+	if r.Thrown && r.ReleaseAt >= 0 {
+		relTip = fmt.Sprintf("  |  rel %.2fs", r.ReleaseAt)
+	}
+	a.tip = fmt.Sprintf("%s  |  %+.1f yds%s  |  STA %d%%  |  was %s",
+		r.Message, r.YardsGained, relTip, int(a.fatigue.Display(sim.RoleRB)*100), a.snapDef.Name)
 }
 
 func (a *App) recordPlay(r sim.Result, tend ai.Snapshot) {
@@ -422,6 +446,8 @@ func (a *App) recordPlay(r sim.Result, tend ai.Snapshot) {
 		OffName:     a.snapPlay.Name,
 		DefCall:     a.snapDef.ID,
 		Shell:       a.snapShell.ID,
+		Look:        a.snapLook.ID,
+		Disguised:   a.snapDisguised,
 		Outcome:     r.Outcome.String(),
 		Yards:       r.YardsGained,
 		DownBefore:  a.snapDown,
@@ -454,9 +480,21 @@ func (a *App) recordPlay(r sim.Result, tend ai.Snapshot) {
 	if e.QBKeep {
 		keep = " KEEP"
 	}
-	fmt.Fprintf(os.Stderr, "play#%d%s %s (%s) vs %s/%s → %s %+.1f yds (%s) tend run=%.0f%% pass=%.0f%% keepT=%.1f n=%d\n",
-		e.N, keep, e.OffPlay, e.Carrier, e.DefCall, e.Shell, e.Outcome, e.Yards, e.Message,
-		e.RunPct*100, e.PassPct*100, e.KeepThreat, e.KeepN)
+	rel := "rel=—"
+	if e.Thrown && e.ReleaseAt >= 0 {
+		rel = fmt.Sprintf("rel=%.2fs", e.ReleaseAt)
+	}
+	pa := ""
+	if e.Mesh != "" && e.Mesh != "none" {
+		pa = fmt.Sprintf(" mesh=%s left=%.2f", e.Mesh, e.LeftoverSec)
+	}
+	vs := e.DefCall + "/" + e.Shell
+	if e.Disguised && e.Look != "" && e.Look != e.Shell {
+		vs = e.DefCall + "/" + e.Look + "→" + e.Shell
+	}
+	fmt.Fprintf(os.Stderr, "play#%d%s %s (%s) vs %s → %s %+.1f yds (%s) %s tend run=%.0f%% pass=%.0f%% runT=%.1f keepT=%.1f n=%d%s\n",
+		e.N, keep, e.OffPlay, e.Carrier, vs, e.Outcome, e.Yards, e.Message,
+		rel, e.RunPct*100, e.PassPct*100, e.RunThreat, e.KeepThreat, e.KeepN, pa)
 }
 
 func (a *App) finishDeadBall() {
@@ -483,8 +521,13 @@ func (a *App) finishDeadBall() {
 	})
 	a.recordPlay(r, a.tracker.Snapshot())
 
+	relTip := ""
+	if r.Thrown && r.ReleaseAt >= 0 {
+		relTip = fmt.Sprintf("  rel %.2fs", r.ReleaseAt)
+	}
+
 	if a.match.Phase == game.PhaseScore {
-		a.tip = fmt.Sprintf("TOUCHDOWN! Home %d — next drive loading…", a.match.HomeScore)
+		a.tip = fmt.Sprintf("TOUCHDOWN! Home %d — next drive loading…%s", a.match.HomeScore, relTip)
 		a.deadBallTimer = 1.4
 		a.play = nil
 		return
@@ -495,8 +538,8 @@ func (a *App) finishDeadBall() {
 	a.play = nil
 	a.match.Phase = game.PhasePlaySelect
 	snap := a.tracker.Snapshot()
-	a.tip = fmt.Sprintf("%s (%.1f yds) → %d & %.0f | D [%s] | run %.0f%% | STA %d%%",
-		r.Message, r.YardsGained, a.match.Down, a.match.Distance, a.defLabel(),
+	a.tip = fmt.Sprintf("%s (%.1f yds%s) → %d & %.0f | D [%s] | run %.0f%% | STA %d%%",
+		r.Message, r.YardsGained, relTip, a.match.Down, a.match.Distance, a.defLabel(),
 		snap.RunPct*100, int(a.fatigue.Display(sim.RoleRB)*100))
 }
 
@@ -535,7 +578,7 @@ func (a *App) Draw(screen *ebiten.Image) {
 	}
 	shown := a.currentPlay()
 	shown.Name = a.selectedLabel()
-	render.DrawHUD(screen, a.match, shown, a.defense, a.shell, a.tip, phase, stam, jukeCD, a.showCall)
+	render.DrawHUD(screen, a.match, shown, a.defense, a.shell, a.look, a.disguised, a.tip, phase, stam, jukeCD, a.showCall)
 }
 
 func (a *App) Layout(outsideWidth, outsideHeight int) (int, int) {

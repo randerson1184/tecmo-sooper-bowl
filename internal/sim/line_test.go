@@ -258,6 +258,64 @@ func TestSpyMakesWorkingKeepsStuffable(t *testing.T) {
 	}
 }
 
+func TestCover2SlantShadesTheHoleWithoutASpy(t *testing.T) {
+	ps := StartSnap(30, playByID("slant"), defByID("base"),
+		playbook.ShellByID(playbook.ShellCover2),
+		rand.New(rand.NewSource(1)), Fatigue{}, LineContext{})
+	if SpyIndex(ps.World) >= 0 {
+		t.Fatal("Cover 2 scrape is not a dedicated spy")
+	}
+	idx := closestHookLB(ps.World)
+	if idx < 0 {
+		t.Fatal("expected a hook LB")
+	}
+	if ps.World.Units[idx].Pos.Y > 30+5.5 {
+		t.Fatalf("Cover 2 slant hole should sit near the LOS, y=%.1f", ps.World.Units[idx].Pos.Y)
+	}
+}
+
+func TestSlantKeepVsBaseCover2IsNotAHouseCall(t *testing.T) {
+	// Film: keeps vs Base / Cover 2 still +12–15 after the spy tax.
+	play := playByID("slant")
+	def := defByID("base")
+	shell := playbook.ShellByID(playbook.ShellCover2)
+	house, keeps, stuffed := 0, 0, 0
+	var sum float64
+	const n = 25
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 21))
+		ps := StartSnap(30, play, def, shell, rng, Fatigue{}, LineContext{})
+		for i := 0; i < 60*8; i++ {
+			if !ps.Tick(1.0/60.0, Input{DY: 1}) {
+				break
+			}
+		}
+		if ps.Result.QBKeep {
+			keeps++
+			sum += ps.Result.YardsGained
+			if ps.Result.YardsGained < 6 {
+				stuffed++
+			}
+		}
+		if ps.Result.YardsGained >= 14 {
+			house++
+		}
+	}
+	if keeps < 10 {
+		t.Fatalf("expected mash-up keeps; keeps=%d/%d", keeps, n)
+	}
+	if house > 5 {
+		t.Fatalf("slant keep vs base/cover2 still a house: %d/%d were 14+", house, n)
+	}
+	avg := sum / float64(keeps)
+	if avg > 8.5 {
+		t.Fatalf("keep vs cover2 should finish in the hole (avg=%.1f, want ≤8.5)", avg)
+	}
+	if stuffed < 4 {
+		t.Fatalf("hole scrape should stuff some keeps; stuffed=%d keeps=%d avg=%.1f", stuffed, keeps, avg)
+	}
+}
+
 func TestObviousPassIsHotterThanFirstDown(t *testing.T) {
 	normal := scriptedPassUntil(t, "base", LineContext{}, -1, 1.45, 16)
 	long := scriptedPassUntil(t, "base", LineContext{ObviousPass: true, Samples: 4}, -1, 1.45, 16)

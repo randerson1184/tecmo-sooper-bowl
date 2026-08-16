@@ -33,14 +33,17 @@ func (m MeshPhase) String() string {
 }
 
 const (
-	paMeshSec     = 0.22
-	paMeshBehind  = 3.6
-	paPocketTax   = 0.10
-	paWarmLeft    = 0.24 // leftover after mesh when RunThreat >= 1.5
-	paHotLeft     = 0.36 // leftover when RunThreat >= 2.5
-	paFitLeft     = 0.08
-	paSellLeftMul = 0.35
-	paHoldDrain   = 0.45 // extra pocket drain after the fake
+	paMeshSec      = 0.22
+	paMeshBehind   = 3.6
+	paPocketTax    = 0.10
+	paWarmLeft     = 0.24 // leftover after mesh when RunThreat >= 1.5
+	paHotLeft      = 0.36 // leftover when RunThreat >= 2.5
+	paFitLeft      = 0.08
+	paSellLeftMul  = 0.35 // unearned leftover: pass-sell may flatten
+	paSellLiveMul  = 0.75 // live run: pass-sell only shaves
+	paLiveLeftMin  = 0.20 // live RunThreat keeps a hittable window
+	paHoldDrain    = 0.45 // extra pocket drain after the fake
+	glanceStemMult = 1.45 // climb to the sit; wrap handles YAC, not a free 12-yard race
 )
 
 func (ps *PlayState) cacheConcept() {
@@ -69,6 +72,8 @@ func (ps *PlayState) cacheConcept() {
 
 // computePAWindow is mesh + leftover. Cold leftover is 0 — they sell during
 // the fake and recover when it ends. A live run (or Run Fit) buys time after.
+// Pass-sell may flatten unearned leftover; live RunThreat vetoes the crush
+// the same way it vetoes lighting the box.
 func computePAWindow(line LineContext, defID string) (mesh, leftover, bite float64) {
 	mesh = paMeshSec
 	if line.RunThreat >= 2.5 {
@@ -80,7 +85,14 @@ func computePAWindow(line LineContext, defID string) (mesh, leftover, bite float
 		leftover += paFitLeft
 	}
 	if line.PassSell() {
-		leftover *= paSellLeftMul
+		if line.RunThreat >= 1.5 {
+			leftover *= paSellLiveMul
+			if leftover < paLiveLeftMin {
+				leftover = paLiveLeftMin
+			}
+		} else {
+			leftover *= paSellLeftMul
+		}
 	}
 	if leftover < 0 {
 		leftover = 0
@@ -111,6 +123,14 @@ func (ps *PlayState) armPlayAction() {
 		u := &ps.World.Units[ps.RBIdx]
 		u.Target = mesh
 		u.HasTarget = true
+	}
+	// Glance: a step onto the stem — not already at the sit.
+	if ps.isGlance() && ps.PrimaryIdx >= 0 {
+		u := &ps.World.Units[ps.PrimaryIdx]
+		if u.Pos.Y < ps.LOS+1.4 {
+			u.Pos.Y = ps.LOS + 1.4
+			u.Pos = field.Clamp(u.Pos)
+		}
 	}
 }
 
@@ -202,6 +222,62 @@ func (ps *PlayState) restorePARoutes() {
 		u.Target = field.Pos{X: field.HashMid, Y: ps.LOS + 10}
 		u.HasTarget = true
 	}
+}
+
+func (ps *PlayState) isGlance() bool {
+	return ps.HasConcept && ps.Concept.PrimaryBreak == "glance"
+}
+
+func (ps *PlayState) glanceStem(i int) bool {
+	if !ps.isGlance() || i != ps.PrimaryIdx || ps.Thrown {
+		return false
+	}
+	u := ps.World.Units[i]
+	return ps.Elapsed < 0.50 && u.Pos.Y < ps.LOS+7
+}
+
+// glanceWrapRadius is YAC close-out. Cold leftover: hook/LB are already there.
+// Live leftover: they bit to the LOS, so the first yards after the catch exist.
+func (ps *PlayState) glanceWrapRadius() float64 {
+	if !ps.isGlance() || ps.CaughtAt <= 0 || ps.Elapsed-ps.CaughtAt > 1.25 {
+		return 0
+	}
+	earned := ps.LeftoverSec >= 0.18 && ps.CaughtAt <= ps.BiteSec+0.10
+	if earned {
+		if ps.Shell.ID == playbook.ShellCover2 {
+			return 1.48
+		}
+		return 1.40
+	}
+	switch ps.Shell.ID {
+	case playbook.ShellManFree:
+		return 1.62
+	case playbook.ShellCover2:
+		return 1.82
+	default:
+		return 1.78
+	}
+}
+
+func (ps *PlayState) glanceWrapSpeed(u *Unit) float64 {
+	if !ps.isGlance() || ps.CaughtAt <= 0 {
+		return 1
+	}
+	if u.CoverJob.IsDeep() {
+		return 1
+	}
+	if u.Role != RoleLB && u.CoverJob != CoverHook && !u.CoverJob.IsFlat() && u.CoverJob != CoverMan {
+		return 1
+	}
+	earned := ps.LeftoverSec >= 0.18 && ps.CaughtAt <= ps.BiteSec+0.10
+	if earned {
+		return 1.08
+	}
+	return 1.28
+}
+
+func (ps *PlayState) glanceSit(i int) bool {
+	return ps.isGlance() && i == ps.PrimaryIdx
 }
 
 func (ps *PlayState) isPlayAction() bool {

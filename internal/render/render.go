@@ -178,14 +178,14 @@ func DrawBall(dst *ebiten.Image, cam *Camera, p field.Pos) {
 }
 
 // DrawHUD prints score, down/distance, stamina, tips.
-func DrawHUD(dst *ebiten.Image, m *game.Match, selected playbook.Play, def playbook.DefenseCall, shell playbook.CoverageShell, tip, phase string, stamina float64, jukeCD float64, showCall bool) {
+func DrawHUD(dst *ebiten.Image, m *game.Match, selected playbook.Play, def playbook.DefenseCall, shell, look playbook.CoverageShell, disguised bool, tip, phase string, stamina float64, jukeCD float64, showCall bool) {
 	line1 := fmt.Sprintf("TECMO SOOPER BOWL  |  HOME %d  AWAY %d  |  Q%d  %d:%02d  |  %s",
 		m.HomeScore, m.AwayScore, m.Quarter, m.ClockSec/60, m.ClockSec%60, phase)
 	line2 := fmt.Sprintf("Ball on %.0f  |  %d & %.0f  |  PlayClock %d",
 		m.BallY, m.Down, m.Distance, m.PlayClock)
 	defStr := "read the look  (D = name)"
 	if showCall {
-		defStr = def.Name + " / " + shell.Name
+		defStr = playbook.Package{Front: def, Shell: shell, Look: look, Disguised: disguised}.String()
 	}
 	line3 := fmt.Sprintf("OFF: [%s]  DEF: [%s]  |  STAMINA %s  JUKE %s",
 		selected.Name, defStr, staminaBar(stamina), jukeReady(jukeCD))

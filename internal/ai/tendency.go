@@ -178,10 +178,7 @@ func (t *Tracker) Snapshot() Snapshot {
 
 // ChoosePackage picks an independent front and coverage shell.
 func ChoosePackage(sit game.SituationClass, snap Snapshot, rng *rand.Rand) playbook.Package {
-	return playbook.Package{
-		Front: ChooseDefense(sit, snap, rng),
-		Shell: ChooseShell(sit, snap, rng),
-	}
+	return ChooseStaffPackage(sit, snap, DefaultStaff(), rng)
 }
 
 // ChooseShell picks Cover 3 / Cover 2 / Man Free from situation + tendencies.
