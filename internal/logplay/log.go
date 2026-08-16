@@ -12,30 +12,40 @@ import (
 
 // Entry is one resolved play.
 type Entry struct {
-	N         int       `json:"n"`
-	Time      time.Time `json:"time"`
-	OffPlay   string    `json:"off_play"`   // inside_zone, sweep, slant, hitch
-	OffName   string    `json:"off_name"`
-	DefCall   string    `json:"def_call"`   // base, run_fit, ... (front)
-	Shell     string    `json:"shell"`      // cover3, cover2, man_free
-	Outcome   string    `json:"outcome"`    // tackle, incomplete, td, ...
-	Yards     float64   `json:"yards"`
-	DownBefore int      `json:"down_before"`
-	DistBefore float64  `json:"dist_before"`
-	BallBefore float64  `json:"ball_before"`
-	DownAfter  int      `json:"down_after"`
-	DistAfter  float64  `json:"dist_after"`
-	BallAfter  float64  `json:"ball_after"`
-	RunPct    float64   `json:"run_pct"`
-	PassPct   float64   `json:"pass_pct"`
-	RightPct  float64   `json:"right_pct"`
-	Stamina    float64 `json:"stamina"` // 0..1 display (1 = fresh)
-	Thrown     bool    `json:"thrown"`
-	Carrier    string  `json:"carrier,omitempty"`
-	QBKeep     bool    `json:"qb_keep"`
-	KeepThreat float64 `json:"keep_threat"`
-	KeepN      int     `json:"keep_n"`
-	Message    string  `json:"message"`
+	N          int       `json:"n"`
+	Time       time.Time `json:"time"`
+	OffPlay    string    `json:"off_play"` // inside_zone, sweep, slant, hitch
+	OffName    string    `json:"off_name"`
+	DefCall    string    `json:"def_call"` // base, run_fit, ... (front)
+	Shell      string    `json:"shell"`    // cover3, cover2, man_free
+	Outcome    string    `json:"outcome"`  // tackle, incomplete, td, ...
+	Yards      float64   `json:"yards"`
+	DownBefore int       `json:"down_before"`
+	DistBefore float64   `json:"dist_before"`
+	BallBefore float64   `json:"ball_before"`
+	DownAfter  int       `json:"down_after"`
+	DistAfter  float64   `json:"dist_after"`
+	BallAfter  float64   `json:"ball_after"`
+	RunPct     float64   `json:"run_pct"`
+	PassPct    float64   `json:"pass_pct"`
+	RightPct   float64   `json:"right_pct"`
+	Stamina    float64   `json:"stamina"` // 0..1 display (1 = fresh)
+	Thrown     bool      `json:"thrown"`
+	Carrier    string    `json:"carrier,omitempty"`
+	QBKeep     bool      `json:"qb_keep"`
+	KeepThreat float64   `json:"keep_threat"`
+	KeepN      int       `json:"keep_n"`
+	Message    string    `json:"message"`
+
+	// Play-action film. Empty mesh on non-PA snaps.
+	RunThreat   float64 `json:"run_threat"`
+	BiteSec     float64 `json:"bite_sec"`
+	LeftoverSec float64 `json:"leftover_sec"`
+	ReleaseAt   float64 `json:"release_at"`
+	Mesh        string  `json:"mesh,omitempty"`
+	BiterN      int     `json:"biter_n"`
+	Biters      string  `json:"biters,omitempty"`
+	SepAtThrow  float64 `json:"sep_at_throw"`
 }
 
 // Logger appends entries to memory and optionally a JSONL file.

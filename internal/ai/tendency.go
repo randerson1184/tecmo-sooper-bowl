@@ -62,22 +62,22 @@ func (t *Tracker) Observe(o PlayObservation) {
 
 // Snapshot is a summary used by ChooseDefense.
 type Snapshot struct {
-	Samples int
-	RunPct  float64
-	PassPct float64
-	LeftPct float64
+	Samples  int
+	RunPct   float64
+	PassPct  float64
+	LeftPct  float64
 	RightPct float64
-	MidPct  float64
+	MidPct   float64
 
-	RunN, PassN             int
-	RunSuccessPct           float64
-	PassSuccessPct          float64
-	RunYds, PassYds         float64
-	RunThreat, PassThreat   float64 // decayed success+explosives, capped
-	KeepThreat              float64
-	KeepN                   int
-	KeepYds                 float64
-	ThrowN                  int // actual throws (called pass, not a keep)
+	RunN, PassN           int
+	RunSuccessPct         float64
+	PassSuccessPct        float64
+	RunYds, PassYds       float64
+	RunThreat, PassThreat float64 // decayed success+explosives, capped
+	KeepThreat            float64
+	KeepN                 int
+	KeepYds               float64
+	ThrowN                int // actual throws (called pass, not a keep)
 }
 
 func (t *Tracker) Snapshot() Snapshot {

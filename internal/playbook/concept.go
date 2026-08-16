@@ -18,7 +18,7 @@ func PlaySlots() []Slot {
 		{Key: 1, Name: "Inside", Plays: []Play{byID["inside_zone"]}},
 		{Key: 2, Name: "Outside", Plays: []Play{byID["sweep"]}},
 		{Key: 3, Name: "Quick", Plays: []Play{byID["slant"], byID["hitch"]}},
-		{Key: 4, Name: "Shot", Plays: []Play{byID["post"]}},
+		{Key: 4, Name: "Shot", Plays: []Play{byID["post"], byID["pa_post"]}},
 	}
 }
 
@@ -33,17 +33,22 @@ type Concept struct {
 }
 
 func ConceptFor(id string) (Concept, bool) {
-	c, ok := concepts()[id]
+	c, ok := conceptByID()[id]
 	return c, ok
 }
 
-func concepts() map[string]Concept {
+var conceptCache map[string]Concept
+
+func conceptByID() map[string]Concept {
+	if conceptCache != nil {
+		return conceptCache
+	}
 	off := DefaultOffense()
 	byID := map[string]Play{}
 	for _, p := range off {
 		byID[p.ID] = p
 	}
-	return map[string]Concept{
+	conceptCache = map[string]Concept{
 		"post": {
 			Play:         byID["post"],
 			DropYards:    3.4,
@@ -51,5 +56,13 @@ func concepts() map[string]Concept {
 			PrimaryDepth: 16,
 			PrimaryBreak: "post",
 		},
+		"pa_post": {
+			Play:         byID["pa_post"],
+			DropYards:    3.8,
+			PlayAction:   true,
+			PrimaryDepth: 16,
+			PrimaryBreak: "post",
+		},
 	}
+	return conceptCache
 }

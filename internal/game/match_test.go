@@ -9,12 +9,12 @@ func TestApplyPlayResultTable(t *testing.T) {
 		phase       Phase
 	}
 	cases := []struct {
-		name                 string
-		down                 int
-		dist, los            float64
-		ballY, yards         float64
+		name                  string
+		down                  int
+		dist, los             float64
+		ballY, yards          float64
 		incomplete, touchdown bool
-		want                 want
+		want                  want
 	}{
 		{
 			name: "gain 4 on 1st and 10",

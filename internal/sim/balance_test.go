@@ -407,8 +407,38 @@ func TestPostVsCover2IsNotAHouseCall(t *testing.T) {
 	if caught < 6 {
 		t.Fatalf("post vs cover2 should still complete sometimes; caught=%d/%d", caught, n)
 	}
-	if house > 8 {
+	if house > 6 {
 		t.Fatalf("post vs cover2 still a house call: %d/%d catches were 20+", house, n)
+	}
+}
+
+func TestInsideZoneVsCover2IsNotAHouseCall(t *testing.T) {
+	// Film: Base / Cover 2 IZ went +62 — two-high vacated the A-gap.
+	play := playByID("inside_zone")
+	def := defByID("base")
+	shell := playbook.ShellByID(playbook.ShellCover2)
+	house, good := 0, 0
+	const n = 30
+	for seed := int64(0); seed < n; seed++ {
+		rng := rand.New(rand.NewSource(seed + 31))
+		ps := StartSnap(30, play, def, shell, rng, Fatigue{}, LineContext{})
+		for i := 0; i < 60*18; i++ {
+			if !ps.Tick(1.0/60.0, Input{DY: 1}) {
+				break
+			}
+		}
+		if ps.Result.YardsGained >= 2.5 {
+			good++
+		}
+		if ps.Result.YardsGained >= 20 {
+			house++
+		}
+	}
+	if good < 8 {
+		t.Fatalf("IZ vs cover2 should still gain sometimes; %d/%d were 2.5+", good, n)
+	}
+	if house > 6 {
+		t.Fatalf("IZ vs cover2 still a house call: %d/%d were 20+", house, n)
 	}
 }
 
@@ -623,4 +653,3 @@ func TestHoldingTheBallCanSack(t *testing.T) {
 		t.Fatalf("holding a slant vs pass rush should sack sometimes; only %d/%d", sacks, n)
 	}
 }
-

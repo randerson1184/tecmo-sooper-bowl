@@ -1,14 +1,15 @@
 // Tecmo Sooper Bowl — Phase 2 feel slice
 //
 // Controls:
-//   1-4     select offensive play (pre-snap)
-//   SPACE   snap / (on pass) throw to primary receiver
-//   Arrow keys  steer ball carrier / QB
-//   SHIFT   juke / spin (brief evade + burst)
-//   R       reset match
-//   T       show play-log summary in tip + stdout
-//   D       toggle named defensive call (hidden by default)
-//   Esc     quit
+//
+//	1-4     select offensive play (pre-snap)
+//	SPACE   snap / (on pass) throw to primary receiver
+//	Arrow keys  steer ball carrier / QB
+//	SHIFT   juke / spin (brief evade + burst)
+//	R       reset match
+//	T       show play-log summary in tip + stdout
+//	D       toggle named defensive call (hidden by default)
+//	Esc     quit
 package main
 
 import (
@@ -36,31 +37,31 @@ const (
 )
 
 type App struct {
-	match    *game.Match
-	world    *sim.World
-	play     *sim.PlayState
-	slots    []playbook.Slot
-	slotI    int
-	varI     int
-	offense  []playbook.Play // flat list (tests / fallback)
-	defense  playbook.DefenseCall
-	shell    playbook.CoverageShell
-	tracker  *ai.Tracker
-	fatigue  sim.Fatigue
-	rng      *rand.Rand
-	tip      string
-	layout   render.Layout
-	cam      render.Camera
-	plays    *logplay.Logger
+	match   *game.Match
+	world   *sim.World
+	play    *sim.PlayState
+	slots   []playbook.Slot
+	slotI   int
+	varI    int
+	offense []playbook.Play // flat list (tests / fallback)
+	defense playbook.DefenseCall
+	shell   playbook.CoverageShell
+	tracker *ai.Tracker
+	fatigue sim.Fatigue
+	rng     *rand.Rand
+	tip     string
+	layout  render.Layout
+	cam     render.Camera
+	plays   *logplay.Logger
 
 	// Snapshot at snap for the log (before result mutates match).
-	snapDown int
-	snapDist float64
-	snapBall float64
-	snapDef  playbook.DefenseCall
+	snapDown  int
+	snapDist  float64
+	snapBall  float64
+	snapDef   playbook.DefenseCall
 	snapShell playbook.CoverageShell
-	snapPlay playbook.Play
-	snapSit  game.SituationClass
+	snapPlay  playbook.Play
+	snapSit   game.SituationClass
 
 	deadBallTimer float64
 	loggedPlay    bool // true once this dead-ball result has been written
@@ -95,7 +96,7 @@ func newApp() *App {
 	a.repickDefense()
 	a.world = a.placeLook()
 	a.cam.Snap(field.Pos{X: field.HashMid, Y: a.match.LineOfScrimmage}, render.ScaleSelect)
-	a.tip = "1-4 slot · SHIFT+3 hitch · SPACE snap · D names the D · T log · R reset"
+	a.tip = "1-4 slot · SHIFT+3 hitch · SHIFT+4 PA · SPACE snap · D names the D"
 	if a.plays != nil && a.plays.Path() != "" {
 		log.Printf("play log → %s", a.plays.Path())
 	}
@@ -309,6 +310,10 @@ func (a *App) snap() {
 		a.tip = "SLANT — quick drop, SPACE when primary breaks in (~0.5s) · green ring"
 	case "hitch":
 		a.tip = "HITCH — SPACE as primary stops outside · then run YAC"
+	case "post":
+		a.tip = "POST — drop, SPACE when primary breaks ~16 · green ring"
+	case "pa_post":
+		a.tip = "PA POST — mesh first (SPACE buffers) · SHIFT aborts the fake"
 	default:
 		a.tip = "Arrows move · SPACE throw · SHIFT juke"
 	}
@@ -353,6 +358,11 @@ func (a *App) updateInPlay(dt float64) {
 			stam = a.fatigue.Display(role)
 			a.tip = fmt.Sprintf("LIVE  %.0f yd line  (%+.1f)  D:%s  STA %d%%",
 				y, gained, a.defLabel(), int(stam*100))
+			if a.play.PlayAction && a.play.Mesh == sim.MeshLive {
+				a.tip = "PA FAKE — SPACE buffers the throw · SHIFT aborts (no bite)"
+			} else if a.play.InLeftoverWindow() {
+				a.tip = "PA WINDOW — leftover bite, SPACE now"
+			}
 			if a.play.Play.Type == playbook.PlayPass && a.play.ControlIdx == a.play.QBIdx {
 				a.tip += "  SPACE throw"
 			}
@@ -408,28 +418,36 @@ func (a *App) recordPlay(r sim.Result, tend ai.Snapshot) {
 	}
 	a.loggedPlay = true
 	e := logplay.Entry{
-		OffPlay:    a.snapPlay.ID,
-		OffName:    a.snapPlay.Name,
-		DefCall:    a.snapDef.ID,
-		Shell:      a.snapShell.ID,
-		Outcome:    r.Outcome.String(),
-		Yards:      r.YardsGained,
-		DownBefore: a.snapDown,
-		DistBefore: a.snapDist,
-		BallBefore: a.snapBall,
-		DownAfter:  a.match.Down,
-		DistAfter:  a.match.Distance,
-		BallAfter:  a.match.BallY,
-		RunPct:     tend.RunPct,
-		PassPct:    tend.PassPct,
-		RightPct:   tend.RightPct,
-		Stamina:    a.fatigue.Display(sim.RoleRB),
-		Thrown:     r.Thrown,
-		Carrier:    string(r.Carrier),
-		QBKeep:     r.QBKeep,
-		KeepThreat: tend.KeepThreat,
-		KeepN:      tend.KeepN,
-		Message:    r.Message,
+		OffPlay:     a.snapPlay.ID,
+		OffName:     a.snapPlay.Name,
+		DefCall:     a.snapDef.ID,
+		Shell:       a.snapShell.ID,
+		Outcome:     r.Outcome.String(),
+		Yards:       r.YardsGained,
+		DownBefore:  a.snapDown,
+		DistBefore:  a.snapDist,
+		BallBefore:  a.snapBall,
+		DownAfter:   a.match.Down,
+		DistAfter:   a.match.Distance,
+		BallAfter:   a.match.BallY,
+		RunPct:      tend.RunPct,
+		PassPct:     tend.PassPct,
+		RightPct:    tend.RightPct,
+		Stamina:     a.fatigue.Display(sim.RoleRB),
+		Thrown:      r.Thrown,
+		Carrier:     string(r.Carrier),
+		QBKeep:      r.QBKeep,
+		KeepThreat:  tend.KeepThreat,
+		KeepN:       tend.KeepN,
+		Message:     r.Message,
+		RunThreat:   r.RunThreat,
+		BiteSec:     r.BiteSec,
+		LeftoverSec: r.LeftoverSec,
+		ReleaseAt:   r.ReleaseAt,
+		Mesh:        r.Mesh,
+		BiterN:      r.BiterN,
+		Biters:      r.Biters,
+		SepAtThrow:  r.SepAtThrow,
 	}
 	e = a.plays.Record(e)
 	keep := ""
@@ -490,6 +508,11 @@ func (a *App) Draw(screen *ebiten.Image) {
 		primary = a.play.PrimaryIdx
 	}
 	render.DrawUnits(screen, &a.cam, a.world, primary)
+	if a.play != nil && a.play.PlayAction && a.play.Mesh == sim.MeshLive &&
+		a.play.QBIdx >= 0 && a.play.RBIdx >= 0 {
+		render.DrawPlayAction(screen, &a.cam,
+			a.world.Units[a.play.QBIdx].Pos, a.world.Units[a.play.RBIdx].Pos)
+	}
 	if a.play != nil && a.play.BallInAir {
 		render.DrawBall(screen, &a.cam, a.play.BallPos)
 	}

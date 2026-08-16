@@ -267,6 +267,10 @@ func (ps *PlayState) applyPassPro(dt float64) {
 		return
 	}
 	ps.PocketLeft -= dt
+	// After the fake the pocket is on a clock — leftover bite is not extra protection.
+	if ps.PlayAction && ps.Mesh != MeshLive && !ps.Thrown && !ps.QBKeep {
+		ps.PocketLeft -= dt * paHoldDrain
+	}
 	qb := field.Pos{}
 	if ps.QBIdx >= 0 {
 		qb = ps.World.Units[ps.QBIdx].Pos

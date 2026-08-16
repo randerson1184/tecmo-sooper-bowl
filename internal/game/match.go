@@ -28,16 +28,16 @@ type Match struct {
 	AwayScore int
 
 	// Quarter 1..4 (MVP may ignore and just run unlimited drives).
-	Quarter     int
-	ClockSec    int // seconds remaining in quarter
-	PlayClock   int
+	Quarter   int
+	ClockSec  int // seconds remaining in quarter
+	PlayClock int
 
 	Possession TeamID
 	// BallOn is yards from the possessing team's own goal (0..100) — "ball on the 25".
 	// For MVP we use absolute field Y from south; see field package.
-	BallY       float64
-	Down        int // 1..4
-	Distance    float64 // yards to gain
+	BallY           float64
+	Down            int     // 1..4
+	Distance        float64 // yards to gain
 	LineOfScrimmage float64
 	FirstDownMarker float64
 
@@ -157,11 +157,11 @@ func (m *Match) turnoverOnDowns() {
 type SituationClass int
 
 const (
-	SitNormal SituationClass = iota
-	SitShortYardage  // 3rd/4th & <= 2
-	SitThirdLong     // 3rd or 4th & >= 7 (name kept; includes 4th & long)
-	SitRedZone       // inside opponent 20
-	SitGoalLine      // inside opponent 5
+	SitNormal       SituationClass = iota
+	SitShortYardage                // 3rd/4th & <= 2
+	SitThirdLong                   // 3rd or 4th & >= 7 (name kept; includes 4th & long)
+	SitRedZone                     // inside opponent 20
+	SitGoalLine                    // inside opponent 5
 )
 
 // LongDown is 3rd or 4th and 7+ (obvious passing down).

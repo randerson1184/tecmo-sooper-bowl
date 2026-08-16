@@ -11,16 +11,16 @@ import (
 type CoverJob string
 
 const (
-	CoverNone     CoverJob = ""
-	CoverDeepLeft CoverJob = "deep_left"
-	CoverDeepMid  CoverJob = "deep_mid"
+	CoverNone      CoverJob = ""
+	CoverDeepLeft  CoverJob = "deep_left"
+	CoverDeepMid   CoverJob = "deep_mid"
 	CoverDeepRight CoverJob = "deep_right"
 	CoverDeepHalfL CoverJob = "deep_half_l"
 	CoverDeepHalfR CoverJob = "deep_half_r"
-	CoverFlatL    CoverJob = "flat_l"
-	CoverFlatR    CoverJob = "flat_r"
-	CoverHook     CoverJob = "hook"
-	CoverMan      CoverJob = "man"
+	CoverFlatL     CoverJob = "flat_l"
+	CoverFlatR     CoverJob = "flat_r"
+	CoverHook      CoverJob = "hook"
+	CoverMan       CoverJob = "man"
 )
 
 func (j CoverJob) IsDeep() bool {

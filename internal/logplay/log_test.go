@@ -41,6 +41,15 @@ func TestRecordAndSummary(t *testing.T) {
 	if _, err := os.Stat(l.Path()); err != nil {
 		t.Fatal(err)
 	}
+	pa := l.Record(Entry{
+		OffPlay: "pa_post", OffName: "PA Post", DefCall: "base", Shell: "cover3",
+		Outcome: "tackle", Yards: 10, Thrown: true,
+		RunThreat: 2.4, BiteSec: 0.58, LeftoverSec: 0.36, ReleaseAt: 0.30,
+		Mesh: "complete", BiterN: 2, Biters: "LB#7,S#12", SepAtThrow: 4.1,
+	})
+	if pa.Mesh != "complete" || pa.BiterN != 2 || pa.ReleaseAt != 0.30 {
+		t.Fatalf("PA telemetry dropped: %+v", pa)
+	}
 	// latest pointer
 	b, err := os.ReadFile(filepath.Join(dir, "playlog_latest_path.txt"))
 	if err != nil || len(b) == 0 {

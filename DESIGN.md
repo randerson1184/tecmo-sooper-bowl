@@ -91,6 +91,7 @@ Bucket recent offensive plays (e.g. last 12–20):
 - **Called pass vs actual throw vs QB keep**: `PassPct` is what they selected; `PassThreat` is only real throws; `KeepThreat` is QB runs. A scramble does not teach the staff “the slant is working.”  
 - Live `KeepThreat` vetoes lighting the box the same way `RunThreat` does, and a paid spy must be able to finish the tackle.  
 - A correct post vs two-high is a 12–16 yard shot, not 30 yards of YAC. Deep halves wrap after the catch. Blitz still sets a sweep edge.  
+- Inside zone vs Cover 2: the Mike fills the hole. Two-high is not a vacant A-gap.  
 - Cover 3 / Pass Rush cannot assign a bailed deep-third CB as the sweep alley; the playside flat/hook sets the edge.
 
 ### 6.2 Front / pressure (independent of coverage)
@@ -207,6 +208,9 @@ PreSnap → SelectPlay → Snap → ResolvePlay (ticks) → DeadBall → UpdateT
 - [x] Pass-heavy looks do not light the box if `RunThreat` or `KeepThreat` is live  
 - [x] QB-keep / scramble: spy in the hole; keep flips coverage to run pursuit; tagged for game-plan  
 - [x] Four pre-snap pictures; named call hidden (debug toggle)  
+- [x] Shift+4 play-action post (callable anytime; run success changes bite, not availability)  
+- [x] PA mesh is a real state (buffer throw / abort fake / bite only after a committed mesh)  
+- [x] PA leftover window: cold recovers when the mesh ends; a live run (or Run Fit) keeps them down after; pass-sell cuts leftover, not the fake  
 - [ ] Occasional disguise (same picture, different post-snap)  
 
 ### Phase 4 — Content & juice
@@ -270,4 +274,4 @@ Graphics may be rectangles. Fun > fidelity.
 
 ---
 
-*Next: one more mixed playtest with the call hidden, then Shift+4 play-action if the book still reads.*
+*Next: playtest leftover window — cold PA vs PA after runs vs abort vs run-fit / pass-sell. Film `leftover_sec` vs `release_at`. Holding past the window should risk a sack.*

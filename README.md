@@ -25,10 +25,11 @@ Requires **Go 1.26.5+** (see `go.mod`). On macOS, Xcode Command Line Tools are u
 | Key | Action |
 |-----|--------|
 | **1–4** | Select slot: **1** inside · **2** outside · **3** quick (slant) · **4** shot (post) |
-| **Shift+3** | Cycle quick game (**hitch**) — the name in the HUD is what you ran |
-| **Space** | Snap · on passes, **throw** to primary (green ring) |
+| **Shift+3** | Cycle quick game (**hitch**) — the HUD name is what snaps |
+| **Shift+4** | Cycle shot to **PA Post** (fake inside zone, throw the post) |
+| **Space** | Snap · on passes, **throw** to primary (green ring). On PA, Space during the mesh **buffers** until the fake finishes |
 | **↑ ↓ ← →** | Steer QB / ball carrier (**↑** = toward their end zone) |
-| **Shift** / **E** | Juke (burst + short tackle evade) |
+| **Shift** / **E** | Juke (burst + short tackle evade). On PA during the mesh, **aborts the fake** (no bite) |
 | **T** | Play-log summary (terminal) |
 | **D** | Toggle named defensive call (hidden by default — read the look) |
 | **R** | Reset drive |
@@ -44,7 +45,7 @@ Requires **Go 1.26.5+** (see `go.mod`). On macOS, Xcode Command Line Tools are u
 - Pre-snap **looks** instead of a named call: one-high off (Cover 3), one-high press (Man Free), two-high squat (Cover 2)  
 - Offensive line: 1:1 pass pro, pocket collapses if you hold it; successful runs buy a beat, 3rd/4th & long gets hotter  
 - Every front sets a sweep edge (light boxes later/wider, not vacant)  
-- JSONL play logging under `logs/` (`thrown`, `carrier`, `qb_keep`, `keep_threat`) so QB runs are visible on film  
+- JSONL play logging under `logs/` (`thrown`, `carrier`, `qb_keep`, `keep_threat`, plus PA `mesh` / `bite_sec` / `leftover_sec` / `release_at` / `biter_n`)  
 
 ## Plays
 
@@ -55,6 +56,7 @@ The HUD name is what snaps. Situation changes the defense, not your button.
 3. **Slant** (3) — quick timing throw to the green-ring primary  
 4. **Hitch** (Shift+3) — outside stop + YAC  
 5. **Post** (4) — intermediate shot, ~16-yard break  
+6. **PA Post** (Shift+4) — mesh with the RB, then throw the post. Space during the fake **buffers**; Shift **aborts** (no bite). A working run buys a leftover window after the mesh; pass-sell cuts that leftover. Holding past it costs rush  
 
 ## Stack
 

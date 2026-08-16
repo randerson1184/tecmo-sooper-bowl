@@ -156,6 +156,16 @@ func DrawUnits(dst *ebiten.Image, cam *Camera, w *sim.World, primaryIdx int) {
 	}
 }
 
+// DrawPlayAction paints the mesh so the fake is readable (gold line + FAKE).
+func DrawPlayAction(dst *ebiten.Image, cam *Camera, qb, rb field.Pos) {
+	qx, qy := cam.YardToScreen(qb)
+	rx, ry := cam.YardToScreen(rb)
+	vector.StrokeLine(dst, qx, qy, rx, ry, 2.2, color.RGBA{255, 220, 70, 210}, false)
+	mx, my := (qx+rx)/2, (qy+ry)/2
+	vector.DrawFilledCircle(dst, mx, my, 3.5, color.RGBA{255, 230, 90, 255}, false)
+	ebitenutil.DebugPrintAt(dst, "FAKE", int(mx-12), int(my-14))
+}
+
 // DrawBall draws the football in flight.
 func DrawBall(dst *ebiten.Image, cam *Camera, p field.Pos) {
 	sx, sy := cam.YardToScreen(p)
