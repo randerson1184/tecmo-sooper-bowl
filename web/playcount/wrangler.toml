@@ -6,4 +6,4 @@ compatibility_date = "2026-08-01"
 # paste the id here, then: npx wrangler deploy
 [[kv_namespaces]]
 binding = "PLAYS"
-id = "REPLACE_ME"
+id = "24db2dd19ce74740a19331afee2fa773"
