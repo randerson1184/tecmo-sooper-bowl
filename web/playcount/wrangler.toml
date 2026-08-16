@@ -1,0 +1,9 @@
+name = "tecmo-playcount"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+
+# After: npx wrangler kv namespace create PLAYS
+# paste the id here, then: npx wrangler deploy
+[[kv_namespaces]]
+binding = "PLAYS"
+id = "REPLACE_ME"

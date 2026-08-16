@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tecmo Sooper Bowl</title>
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #0a0c12;
+      color: #c8cdd6;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    #wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px 12px 28px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    #lede, #status, #keys, #hint {
+      margin: 0 0 8px;
+      max-width: 720px;
+      font-size: 13px;
+      line-height: 1.45;
+      color: #8b93a1;
+      text-align: center;
+    }
+    #keys { color: #c8cdd6; }
+    #bar {
+      width: min(420px, 90vw);
+      height: 6px;
+      margin: 0 0 12px;
+      background: #1c2230;
+      border-radius: 3px;
+      overflow: hidden;
+      display: none;
+    }
+    #bar > span {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: #d4a017;
+    }
+    #phone {
+      display: none;
+      max-width: 520px;
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      background: #3a2010;
+      color: #f0d0a0;
+      font-size: 13px;
+      text-align: center;
+    }
+    #actions { margin-top: 10px; }
+    button {
+      background: #1c2433;
+      color: #e6eaf0;
+      border: 1px solid #4a5568;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button:hover { border-color: #d4a017; }
+    #privacy { margin: 8px 0 0; max-width: 640px; font-size: 11px; color: #6b7380; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <h1>Tecmo Sooper Bowl</h1>
+    <p id="lede">
+      Offense-only arcade prototype. Try 20–30 snaps, then download the anonymous film.<br>
+      Desktop keyboard required — phones cannot play.
+    </p>
+    <p id="phone">This needs a keyboard. Open it on a computer.</p>
+    <p id="status">Loading the field…</p>
+    <div id="bar"><span></span></div>
+    <p id="keys">
+      <strong>1–4</strong> Inside / Outside / Quick / Shot ·
+      <strong>Shift+3 / Shift+4</strong> cycle variants ·
+      <strong>Space</strong> snap / throw ·
+      <strong>arrows</strong> steer ·
+      <strong>Shift</strong> juke
+    </p>
+    <p id="hint">
+      Click the field once so keys stay here. Read the defense: one-high off, one-high press, or two-high squat.
+      It may disguise. Successful runs improve play-action — throw while <strong>PA WINDOW</strong> is up.
+    </p>
+    <div id="actions">
+      <button type="button" id="download">Download anonymous play film</button>
+    </div>
+    <p id="privacy">
+      The file is gameplay only (plays, yards, looks). No name, email, or keys.
+      After ~20 snaps, download and send it to whoever invited you.
+    </p>
+  </div>
+  <script src="config.js"></script>
+  <script src="wasm_exec.js"></script>
+  <script>
+    (function () {
+      const status = document.getElementById("status");
+      const bar = document.getElementById("bar");
+      const fill = bar.querySelector("span");
+      const phone = document.getElementById("phone");
+      if (window.matchMedia("(pointer: coarse)").matches && window.innerWidth < 800) {
+        phone.style.display = "block";
+      }
+
+      const steal = new Set(["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+      window.addEventListener("keydown", function (e) {
+        if (steal.has(e.code) || e.key === " ") {
+          e.preventDefault();
+        }
+      }, { passive: false });
+
+      // First snap = a real player. Later snaps refresh the count (throttled server-side).
+      window.tecmoOnSnap = function (n, sessionId, build) {
+        const url = window.TECMO_PLAYCOUNT_URL;
+        if (!url || (n !== 1 && n % 10 !== 0)) {
+          return;
+        }
+        const body = JSON.stringify({
+          session_id: sessionId,
+          build: build,
+          snaps: n,
+        });
+        try {
+          if (n > 1 && navigator.sendBeacon) {
+            navigator.sendBeacon(url, new Blob([body], { type: "application/json" }));
+            return;
+          }
+        } catch (e) {}
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: body,
+          keepalive: true,
+        }).catch(function () {});
+      };
+
+      document.getElementById("download").addEventListener("click", function () {
+        if (typeof tecmoExportFilm !== "function") {
+          status.textContent = "Game is still loading.";
+          return;
+        }
+        const text = tecmoExportFilm();
+        if (!text) {
+          status.textContent = "No film yet — play a snap first.";
+          return;
+        }
+        const blob = new Blob([text], { type: "application/x-ndjson" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "tecmo-film.jsonl";
+        a.click();
+        URL.revokeObjectURL(a.href);
+        status.textContent = "Film downloaded — send that file back.";
+      });
+
+      function loadWasm() {
+        return fetch("game.wasm").then(function (res) {
+          if (!res.ok) throw new Error("game.wasm " + res.status);
+          const total = Number(res.headers.get("content-length")) || 0;
+          if (!res.body || !total) {
+            return res.arrayBuffer();
+          }
+          bar.style.display = "block";
+          const reader = res.body.getReader();
+          const chunks = [];
+          let received = 0;
+          function pump() {
+            return reader.read().then(function (part) {
+              if (part.done) {
+                const buf = new Uint8Array(received);
+                let off = 0;
+                for (let i = 0; i < chunks.length; i++) {
+                  buf.set(chunks[i], off);
+                  off += chunks[i].length;
+                }
+                return buf.buffer;
+              }
+              chunks.push(part.value);
+              received += part.value.length;
+              const pct = Math.min(100, Math.round(received / total * 100));
+              fill.style.width = pct + "%";
+              status.textContent = "Loading the field… " + pct + "%";
+              return pump();
+            });
+          }
+          return pump();
+        });
+      }
+
+      const go = new Go();
+      loadWasm()
+        .then(function (buf) {
+          return WebAssembly.instantiate(buf, go.importObject);
+        })
+        .then(function (r) {
+          bar.style.display = "none";
+          status.textContent = "Click the field, then play. Aim for 20–30 snaps.";
+          go.run(r.instance);
+        })
+        .catch(function (err) {
+          status.textContent = "Could not start: " + err;
+          console.error(err);
+        });
+    })();
+  </script>
+</body>
+</html>

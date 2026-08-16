@@ -13,11 +13,14 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"image/color"
 	"log"
-	"math/rand"
+	mathrand "math/rand"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -48,7 +51,7 @@ type App struct {
 	shell   playbook.CoverageShell
 	tracker *ai.Tracker
 	fatigue sim.Fatigue
-	rng     *rand.Rand
+	rng     *mathrand.Rand
 	tip     string
 	layout  render.Layout
 	cam     render.Camera
@@ -71,11 +74,46 @@ type App struct {
 	staff         ai.Staff
 	look          playbook.CoverageShell
 	disguised     bool
+
+	sessionID string
+	started   time.Time
+}
+
+// buildID is set at wasm/desktop link time: -ldflags "-X main.buildID=<sha>"
+var buildID = "dev"
+
+var liveApp *App
+
+func inBrowser() bool {
+	return runtime.GOOS == "js"
+}
+
+func newSessionID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+func (a *App) exportFilm() string {
+	if a == nil {
+		return ""
+	}
+	return logplay.ExportJSONL(a.plays, logplay.SessionMeta{
+		SessionID: a.sessionID,
+		Build:     buildID,
+		StartedAt: a.started,
+	})
 }
 
 func newApp() *App {
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	logger, err := logplay.New("logs")
+	rng := mathrand.New(mathrand.NewSource(time.Now().UnixNano()))
+	logDir := "logs"
+	if inBrowser() {
+		logDir = "" // no filesystem; session stays in memory
+	}
+	logger, err := logplay.New(logDir)
 	if err != nil {
 		log.Printf("play log file unavailable (memory only): %v", err)
 		logger, _ = logplay.New("")
@@ -94,8 +132,10 @@ func newApp() *App {
 			PadBottom: 20,
 			PadX:      16,
 		},
-		cam:   render.NewCamera(),
-		staff: ai.DefaultStaff(),
+		cam:       render.NewCamera(),
+		staff:     ai.DefaultStaff(),
+		sessionID: newSessionID(),
+		started:   time.Now(),
 	}
 	a.slotI = 0
 	a.varI = 0
@@ -173,6 +213,10 @@ func (a *App) lineCtx() sim.LineContext {
 
 func (a *App) Update() error {
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		if inBrowser() {
+			a.tip = "Esc does nothing here — R resets the drive"
+			return nil
+		}
 		if a.plays != nil {
 			fmt.Fprintln(os.Stderr, a.plays.FormatSummary())
 			a.plays.Close()
@@ -192,6 +236,9 @@ func (a *App) Update() error {
 		fmt.Fprintln(os.Stderr, sum)
 		// Short tip line
 		a.tip = "Log summary printed to terminal (also logs/*.jsonl)"
+		if inBrowser() {
+			a.tip = "Log summary printed to the browser console"
+		}
 		if last, ok := a.plays.Last(); ok {
 			a.tip = fmt.Sprintf("Last: %s vs %s → %s %+.1f | T=full summary in terminal",
 				last.OffName, last.DefCall, last.Outcome, last.Yards)
@@ -477,6 +524,9 @@ func (a *App) recordPlay(r sim.Result, tend ai.Snapshot) {
 		SepAtThrow:  r.SepAtThrow,
 	}
 	e = a.plays.Record(e)
+	if inBrowser() {
+		notifySnap(e.N, a.sessionID, buildID)
+	}
 	keep := ""
 	if e.QBKeep {
 		keep = " KEEP"
@@ -580,6 +630,10 @@ func (a *App) Draw(screen *ebiten.Image) {
 	shown := a.currentPlay()
 	shown.Name = a.selectedLabel()
 	render.DrawHUD(screen, a.match, shown, a.defense, a.shell, a.look, a.disguised, a.tip, phase, stam, jukeCD, a.showCall)
+	if a.match.Phase != game.PhaseInPlay {
+		sel := a.currentPlay()
+		render.DrawPlayCards(screen, a.layout, &a.cam, a.slots, a.slotI, sel)
+	}
 }
 
 func (a *App) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -592,7 +646,16 @@ func main() {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetTPS(60)
 
-	if err := ebiten.RunGame(newApp()); err != nil {
+	app := newApp()
+	liveApp = app
+	registerFilmExport(func() string {
+		if liveApp == nil {
+			return ""
+		}
+		return liveApp.exportFilm()
+	})
+
+	if err := ebiten.RunGame(app); err != nil {
 		log.Fatal(err)
 	}
 }
