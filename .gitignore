@@ -10,9 +10,10 @@
 *.swp
 *~
 
-# WASM build artifacts (later)
+# WASM / Wrangler local state
 web/*.wasm
 web/wasm_exec.js
+.wrangler/
 
 # Session play logs (balance tuning)
 logs/

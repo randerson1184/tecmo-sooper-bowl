@@ -249,8 +249,8 @@ PreSnap → SelectPlay → Snap → ResolvePlay (ticks) → DeadBall → UpdateT
 - [ ] Team/roster data files
 - [ ] Season shell (schedule, standings)
 - [ ] SFX / simple presentation
-- [x] Local WASM playtest + anonymous film download (no POST yet)
-- [ ] GitHub Pages public link; invited testers send the downloaded JSONL
+- [x] Local WASM playtest + anonymous film download
+- [x] GitHub Pages public link; first-snap counter; explicit film upload (gameplay JSONL only, 90-day KV)
 - [ ] Balance pass with recorded “cheese” scenarios as regression tests
 
 ---
