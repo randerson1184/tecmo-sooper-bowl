@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tecmo Sooper Bowl — field</title>
+  <style>
+    /* This page's own window is the game's "outside size" (Ebiten sizes its
+       canvas to fill it). It lives in an iframe sized to 960x720 by the
+       parent page — keeping the aspect ratio correct is the parent's job
+       via CSS; this page just fills whatever box it's given, edge to edge. */
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    #status {
+      position: absolute;
+      top: 44%;
+      width: 100%;
+      text-align: center;
+      color: #8b93a1;
+      font-size: 13px;
+    }
+    #bar {
+      position: absolute;
+      top: calc(44% + 22px);
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(300px, 80%);
+      height: 6px;
+      background: #1c2230;
+      border-radius: 3px;
+      overflow: hidden;
+      display: none;
+    }
+    #bar > span {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: #d4a017;
+    }
+  </style>
+</head>
+<body>
+  <p id="status">Loading the field…</p>
+  <div id="bar"><span></span></div>
+  <script src="config.js"></script>
+  <script src="wasm_exec.js"></script>
+  <script>
+    (function () {
+      const status = document.getElementById("status");
+      const bar = document.getElementById("bar");
+      const fill = bar.querySelector("span");
+
+      const steal = new Set(["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+      window.addEventListener("keydown", function (e) {
+        if (steal.has(e.code) || e.key === " ") {
+          e.preventDefault();
+        }
+      }, { passive: false });
+
+      function playcountURL() {
+        return (window.TECMO_PLAYCOUNT_URL || "").replace(/\/+$/, "");
+      }
+
+      function uploadFilm() {
+        const url = playcountURL();
+        if (!url || typeof tecmoExportFilm !== "function") {
+          return Promise.resolve(false);
+        }
+        const text = tecmoExportFilm();
+        if (!text || text.length < 20) {
+          return Promise.resolve(false);
+        }
+        return fetch(url + "/film", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: text,
+          keepalive: true,
+        })
+          .then(function (r) { return r.ok; })
+          .catch(function () { return false; });
+      }
+
+      // First snap = a real player. Every 10 snaps we also stash film.
+      window.tecmoOnSnap = function (n, sessionId, build) {
+        const url = playcountURL();
+        if (!url || (n !== 1 && n % 10 !== 0)) {
+          return;
+        }
+        const body = JSON.stringify({ session_id: sessionId, build: build, snaps: n });
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: body,
+          keepalive: true,
+        }).catch(function () {});
+        uploadFilm();
+      };
+
+      // Exposed for the parent page's Download / Send buttons.
+      window.tecmoSendFilm = function () {
+        return uploadFilm();
+      };
+
+      function loadWasm() {
+        return fetch("game.wasm").then(function (res) {
+          if (!res.ok) throw new Error("game.wasm " + res.status);
+          const total = Number(res.headers.get("content-length")) || 0;
+          if (!res.body || !total) {
+            return res.arrayBuffer();
+          }
+          bar.style.display = "block";
+          const reader = res.body.getReader();
+          const chunks = [];
+          let received = 0;
+          function pump() {
+            return reader.read().then(function (part) {
+              if (part.done) {
+                const buf = new Uint8Array(received);
+                let off = 0;
+                for (let i = 0; i < chunks.length; i++) {
+                  buf.set(chunks[i], off);
+                  off += chunks[i].length;
+                }
+                return buf.buffer;
+              }
+              chunks.push(part.value);
+              received += part.value.length;
+              const pct = Math.min(100, Math.round(received / total * 100));
+              fill.style.width = pct + "%";
+              status.textContent = "Loading the field… " + pct + "%";
+              return pump();
+            });
+          }
+          return pump();
+        });
+      }
+
+      const go = new Go();
+      loadWasm()
+        .then(function (buf) { return WebAssembly.instantiate(buf, go.importObject); })
+        .then(function (r) {
+          bar.style.display = "none";
+          status.style.display = "none";
+          go.run(r.instance);
+        })
+        .catch(function (err) {
+          status.textContent = "Could not start: " + err;
+          console.error(err);
+        });
+    })();
+  </script>
+</body>
+</html>
