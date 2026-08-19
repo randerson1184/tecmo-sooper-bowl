@@ -3,7 +3,7 @@
 // Controls:
 //
 //	1-4     select offensive play (pre-snap)
-//	SPACE   snap / (on pass) throw to primary receiver
+//	SPACE   snap / (on pass) throw to primary / skip replay
 //	Arrow keys  steer ball carrier / QB
 //	SHIFT   juke / spin (brief evade + burst)
 //	R       reset match
@@ -75,6 +75,11 @@ type App struct {
 	look          playbook.CoverageShell
 	disguised     bool
 
+	// Last-play tape. tapeT is live-play seconds; playback runs at ReplayRate.
+	tape     *sim.Tape
+	tapeT    float64
+	tapeHold float64
+
 	sessionID string
 	started   time.Time
 }
@@ -134,7 +139,7 @@ func newApp() *App {
 		},
 		cam:       render.NewCamera(),
 		staff:     ai.DefaultStaff(),
-		sessionID: newSessionID(),
+		sessionID: persistedSessionID(),
 		started:   time.Now(),
 	}
 	a.slotI = 0
@@ -263,6 +268,9 @@ func (a *App) Update() error {
 	case game.PhaseInPlay:
 		a.updateInPlay(dt)
 		a.updateLiveCamera()
+	case game.PhaseReplay:
+		a.updateReplay(dt)
+		a.updateLiveCamera()
 	case game.PhaseDeadBall:
 		a.deadBallTimer -= dt
 		a.updateLiveCamera()
@@ -289,7 +297,10 @@ func (a *App) Update() error {
 
 func (a *App) updateLiveCamera() {
 	focus := field.Pos{X: field.HashMid, Y: a.match.LineOfScrimmage}
-	if a.play != nil {
+	if a.match.Phase == game.PhaseReplay && a.world != nil {
+		focus = a.world.Ball
+		focus.Y += 3
+	} else if a.play != nil {
 		if a.play.BallInAir {
 			focus = a.play.BallPos
 		} else if a.world != nil {
@@ -362,7 +373,11 @@ func (a *App) snap() {
 	if look.ID == "" {
 		look = a.shell
 	}
+	lookWorld := a.world
 	a.play = sim.StartSnapLook(a.match.LineOfScrimmage, p, a.defense, a.shell, look, a.rng, a.fatigue, a.lineCtx())
+	if a.play != nil && a.play.Tape != nil {
+		a.play.Tape.StampLook(lookWorld)
+	}
 	a.world = a.play.World
 	a.match.Phase = game.PhaseInPlay
 	a.cam.SetTarget(a.world.Ball, render.ScaleLive)
@@ -460,8 +475,6 @@ func ballCarrier(w *sim.World) int {
 }
 
 func (a *App) beginDeadBall() {
-	a.match.Phase = game.PhaseDeadBall
-	a.deadBallTimer = 1.0
 	r := a.play.Result
 	// Fatigue from this snap
 	wasPass := a.play.Play.Type == playbook.PlayPass
@@ -480,8 +493,73 @@ func (a *App) beginDeadBall() {
 	if r.Thrown && r.ReleaseAt >= 0 {
 		relTip = fmt.Sprintf("  |  rel %.2fs", r.ReleaseAt)
 	}
+	if a.play.Tape != nil && a.play.Tape.Len() > 0 {
+		a.tape = a.play.Tape
+		a.tapeT = 0
+		a.tapeHold = sim.ReplayHoldSec
+		a.match.Phase = game.PhaseReplay
+		a.applyTape()
+		a.tip = fmt.Sprintf("REPLAY 0.5×  %s  %+.1f yds%s  — SPACE next play",
+			r.Message, r.YardsGained, relTip)
+		return
+	}
+	a.match.Phase = game.PhaseDeadBall
+	a.deadBallTimer = 1.0
 	a.tip = fmt.Sprintf("%s  |  %+.1f yds%s  |  STA %d%%  |  was %s",
 		r.Message, r.YardsGained, relTip, int(a.fatigue.Display(sim.RoleRB)*100), a.snapDef.Name)
+}
+
+func (a *App) applyTape() {
+	if a.tape == nil {
+		return
+	}
+	v := a.tape.ViewAt(a.tapeT)
+	a.world = v.World
+}
+
+func (a *App) updateReplay(dt float64) {
+	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
+		a.finishReplay()
+		return
+	}
+	dur := 0.0
+	if a.tape != nil {
+		dur = a.tape.Duration()
+	}
+	if a.tapeHold > 0 {
+		a.tapeHold -= dt
+		if a.tapeHold < 0 {
+			a.tapeHold = 0
+		}
+		a.tapeT = 0
+		a.applyTape()
+		return
+	}
+	if dur <= 0 {
+		a.applyTape()
+		return
+	}
+	if a.tapeT >= dur {
+		a.tapeT = 0
+		a.tapeHold = sim.ReplayHoldSec
+		a.applyTape()
+		return
+	}
+	a.tapeT += dt * sim.ReplayRate
+	if a.tapeT > dur {
+		a.tapeT = dur
+	}
+	a.applyTape()
+}
+
+func (a *App) finishReplay() {
+	a.tape = nil
+	a.tapeT = 0
+	a.tapeHold = 0
+	if a.play != nil && a.play.World != nil {
+		a.world = a.play.World
+	}
+	a.finishDeadBall()
 }
 
 func (a *App) recordPlay(r sim.Result, tend ai.Snapshot) {
@@ -598,22 +676,48 @@ func (a *App) Draw(screen *ebiten.Image) {
 	screen.Fill(color.RGBA{10, 12, 18, 255})
 	render.DrawField(screen, a.layout, &a.cam, a.match)
 	primary := -1
-	if a.play != nil {
+	ballInAir := false
+	ballPos := field.Pos{}
+	meshLive := false
+	if a.match.Phase == game.PhaseReplay && a.tape != nil {
+		v := a.tape.ViewAt(a.tapeT)
+		primary = v.PrimaryIdx
+		ballInAir = v.BallInAir
+		if v.World != nil {
+			ballPos = v.World.Ball
+		}
+		meshLive = v.MeshLive
+	} else if a.play != nil {
 		primary = a.play.PrimaryIdx
+		ballInAir = a.play.BallInAir
+		ballPos = a.play.BallPos
+		meshLive = a.play.PlayAction && a.play.Mesh == sim.MeshLive
 	}
 	render.DrawUnits(screen, &a.cam, a.world, primary)
-	if a.play != nil && a.play.PlayAction && a.play.Mesh == sim.MeshLive &&
-		a.play.QBIdx >= 0 && a.play.RBIdx >= 0 {
-		render.DrawPlayAction(screen, &a.cam,
-			a.world.Units[a.play.QBIdx].Pos, a.world.Units[a.play.RBIdx].Pos)
+	if meshLive && a.world != nil {
+		var qb, rb field.Pos
+		var gotQB, gotRB bool
+		for _, u := range a.world.Units {
+			if u.Role == sim.RoleQB {
+				qb, gotQB = u.Pos, true
+			}
+			if u.Role == sim.RoleRB {
+				rb, gotRB = u.Pos, true
+			}
+		}
+		if gotQB && gotRB {
+			render.DrawPlayAction(screen, &a.cam, qb, rb)
+		}
 	}
-	if a.play != nil && a.play.BallInAir {
-		render.DrawBall(screen, &a.cam, a.play.BallPos)
+	if ballInAir {
+		render.DrawBall(screen, &a.cam, ballPos)
 	}
 	phase := "SELECT"
 	switch a.match.Phase {
 	case game.PhaseInPlay:
 		phase = "LIVE"
+	case game.PhaseReplay:
+		phase = "REPLAY"
 	case game.PhaseDeadBall:
 		phase = "WHISTLE"
 	case game.PhaseScore:
@@ -630,7 +734,10 @@ func (a *App) Draw(screen *ebiten.Image) {
 	shown := a.currentPlay()
 	shown.Name = a.selectedLabel()
 	render.DrawHUD(screen, a.match, shown, a.defense, a.shell, a.look, a.disguised, a.tip, phase, stam, jukeCD, a.showCall)
-	if a.match.Phase != game.PhaseInPlay {
+	if a.match.Phase == game.PhaseReplay {
+		render.DrawReplayMark(screen, float64(a.layout.PadTop)+6)
+	}
+	if a.match.Phase != game.PhaseInPlay && a.match.Phase != game.PhaseReplay {
 		sel := a.currentPlay()
 		render.DrawPlayCards(screen, a.layout, &a.cam, a.slots, a.slotI, sel)
 	}

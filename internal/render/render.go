@@ -7,11 +7,13 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/randerson1184/tecmo-sooper-bowl/internal/field"
 	"github.com/randerson1184/tecmo-sooper-bowl/internal/game"
 	"github.com/randerson1184/tecmo-sooper-bowl/internal/playbook"
 	"github.com/randerson1184/tecmo-sooper-bowl/internal/sim"
+	"golang.org/x/image/font/basicfont"
 )
 
 // Layout is the screen chrome around the play surface.
@@ -197,6 +199,23 @@ func DrawHUD(dst *ebiten.Image, m *game.Match, selected playbook.Play, def playb
 
 	// Stamina bar graphic under HUD text area
 	drawMeter(dst, 8, 58, 160, 8, stamina, color.RGBA{80, 200, 120, 255}, color.RGBA{40, 40, 40, 200})
+}
+
+var replayFace = text.NewGoXFace(basicfont.Face7x13)
+
+// DrawReplayMark stamps black REPLAY at the top of the playfield.
+func DrawReplayMark(dst *ebiten.Image, top float64) {
+	if dst == nil {
+		return
+	}
+	const msg = "REPLAY"
+	const scale = 4.0
+	w, _ := text.Measure(msg, replayFace, 0)
+	op := &text.DrawOptions{}
+	op.GeoM.Scale(scale, scale)
+	op.GeoM.Translate((float64(dst.Bounds().Dx())-w*scale)/2, top)
+	op.ColorScale.ScaleWithColor(color.Black)
+	text.Draw(dst, msg, replayFace, op)
 }
 
 func staminaBar(s float64) string {

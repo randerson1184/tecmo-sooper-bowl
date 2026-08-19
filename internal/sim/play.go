@@ -129,6 +129,9 @@ type PlayState struct {
 	// CarrierRole at whistle (for fatigue accounting).
 	CarrierRole Role
 
+	// Pose tape of this snap (frame 0 = snap).
+	Tape *Tape
+
 	rng *rand.Rand
 }
 
@@ -238,8 +241,6 @@ func StartSnapLook(los float64, play playbook.Play, def playbook.DefenseCall, sh
 				if u.Role == RoleS || u.Role == RoleCB {
 					u.Speed *= 1.03
 					u.BaseSpeed = u.Speed
-					// shade deep: start a bit deeper
-					u.Pos.Y += 2.5
 				}
 			}
 		}
@@ -250,6 +251,16 @@ func StartSnapLook(los float64, play playbook.Play, def playbook.DefenseCall, sh
 			ps.RBIdx = i
 		}
 	}
+
+	// Tape frame 0 is this huddle — the same picture placeLook draws pre-snap.
+	AlignDefense(w, def, look, los)
+	if ps.QBIdx >= 0 {
+		w.Units[ps.QBIdx].HasBall = true
+		ps.ControlIdx = ps.QBIdx
+	}
+	ps.PrimaryIdx = pickPrimary(w, play)
+	ps.Tape = newTape(ps.PrimaryIdx)
+	ps.Tape.capture(ps)
 
 	// Sweep: slight outside align (not a free Super Bowl lane)
 	if play.ID == "sweep" {
@@ -278,7 +289,9 @@ func StartSnapLook(los float64, play playbook.Play, def playbook.DefenseCall, sh
 	}
 
 	// Assign primary receiver: first WR matching play side preference.
-	ps.PrimaryIdx = pickPrimary(w, play)
+	if ps.PrimaryIdx < 0 {
+		ps.PrimaryIdx = pickPrimary(w, play)
+	}
 	AssignCoverage(w, shell, los, ps.PrimaryIdx)
 	// Jobs are the live shell; positions stay on the look so they rotate after the snap.
 	if look.ID != shell.ID {
@@ -289,19 +302,6 @@ func StartSnapLook(los float64, play playbook.Play, def playbook.DefenseCall, sh
 		assignQBSpy(w, los, def, line)
 		if play.ID == "slant" {
 			shadeKeepHole(w, los, shell, line)
-		}
-	}
-
-	if play.Type == playbook.PlayRun {
-		// Ball starts with QB until handoff
-		if ps.QBIdx >= 0 {
-			w.Units[ps.QBIdx].HasBall = true
-			ps.ControlIdx = ps.QBIdx // brief; switches on handoff
-		}
-	} else {
-		if ps.QBIdx >= 0 {
-			w.Units[ps.QBIdx].HasBall = true
-			ps.ControlIdx = ps.QBIdx
 		}
 	}
 
@@ -497,8 +497,12 @@ func setSweepContain(w *World, def playbook.DefenseCall, shell playbook.Coverage
 	case "blitz":
 		// Extra rusher, not a vacant alley — force the stretch inside.
 		alley, step, spd = 14.0, -0.25, 1.10
-	case "pass_rush", "soft_zone":
-		// Light box, not a vacant alley: wider than Run Fit, still forces inside.
+	case "pass_rush", "soft_zone", "base":
+		// Light/balanced box, not a vacant alley: wider than Run Fit, still
+		// forces inside. Base had no case here at all until now — it was
+		// quietly inheriting the pre-tuning default (17.5 / +0.15 / 1.02),
+		// wider and slower than even the intentionally light fronts above.
+		// Film: two sweeps vs base broke 51.8 and 64.5 in one session.
 		alley, step, spd = 15.5, -0.2, 1.07
 	}
 	// Cover 2 squat corners must still force the stretch inside, even in a light box.
@@ -1039,6 +1043,9 @@ func (ps *PlayState) Tick(dt float64, in Input) bool {
 	ps.checkDeadBall()
 	if !ps.Alive {
 		ps.sealResult()
+	}
+	if ps.Tape != nil {
+		ps.Tape.capture(ps)
 	}
 	return ps.Alive
 }
@@ -1669,10 +1676,12 @@ func (ps *PlayState) aiDefense(i int, ballCarrier int, dt float64) {
 			}
 			if ps.Def.ID == "run_fit" && bp.X > forceX {
 				forceX = bp.X + 1.6
-			}
-			// Cover 3 / light: squeeze if they bounce outside the stored alley.
-			light := ps.Def.ID == "pass_rush" || ps.Def.ID == "soft_zone" || ps.Def.ID == "blitz"
-			if light && (ps.Shell.ID == playbook.ShellCover3 || ps.Shell.ID == playbook.ShellManFree) && bp.X > forceX+1.4 {
+			} else if bp.X > forceX+1.4 {
+				// Every other front/shell: contain was chasing a point fixed
+				// at the snap and never re-checked it. Bounce it outside
+				// (backward-then-out worked especially well, since he was
+				// also pinned near the LOS) and he'd stand at a spot that no
+				// longer had anything to do with where the ball was.
 				forceX = bp.X + 1.1
 			}
 			// Set the edge at the LOS — do not chase into the backfield and stuff every stretch.
@@ -2028,7 +2037,7 @@ func (ps *PlayState) checkDeadBall() {
 				if ps.Def.ID == "blitz" {
 					r = 1.55
 				}
-				if ps.Def.ID == "pass_rush" || ps.Def.ID == "soft_zone" {
+				if ps.Def.ID == "pass_rush" || ps.Def.ID == "soft_zone" || ps.Def.ID == "base" {
 					r = 1.58
 				}
 				if ps.Shell.ID == playbook.ShellCover2 {

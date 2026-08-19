@@ -126,9 +126,16 @@ func TestEveryFrontSetsSweepContain(t *testing.T) {
 }
 
 func TestSweepVsBaseIsNotAHouseCall(t *testing.T) {
+	// Film: base had no case in setSweepContain's alley/step/spd switch (nor
+	// in the sweep tackle-radius bump) — it quietly inherited the loosest
+	// numbers on the board, looser even than the intentionally light fronts.
+	// One session: two sweeps vs base/cover3 broke for +51.8 and +64.5.
+	// house>12/30 (40%) never would have caught that; tightened to match
+	// the other sweep-contain tests in this file.
 	play := playByID("sweep")
 	def := defByID("base")
-	house, stuffed := 0, 0
+	house := 0
+	var total float64
 	const n = 30
 	for seed := int64(0); seed < n; seed++ {
 		rng := rand.New(rand.NewSource(seed + 50))
@@ -141,20 +148,23 @@ func TestSweepVsBaseIsNotAHouseCall(t *testing.T) {
 		if ps.Result.YardsGained >= 20 {
 			house++
 		}
-		if ps.Result.YardsGained < 4 {
-			stuffed++
-		}
+		total += ps.Result.YardsGained
 	}
-	if house > 12 {
+	if house > 5 {
 		t.Fatalf("sweep vs base still a house call: %d/%d were 20+", house, n)
 	}
-	if stuffed < 6 {
-		t.Fatalf("base must set the edge sometimes; only %d/%d under 4 yds", stuffed, n)
+	// Balanced box: a set edge caps the gain, it doesn't need to blow the
+	// play up every time the way Run Fit does.
+	if avg := total / n; avg > 7 {
+		t.Fatalf("base is not setting the edge; avg %.1f yds/play", avg)
 	}
 }
 
 func TestSweepVsBaseCover2IsNotAHouseCall(t *testing.T) {
-	// The leak: Base + Cover 2 squat corners left the edge empty (~+70 on film).
+	// The leak: Base + Cover 2 squat corners left the edge empty (~+70 on
+	// film, twice now — most recently +72.4 in the same session as the
+	// base/cover3 breaks above). house>10/30 (33%) is too loose to be a
+	// real guard; tightened to match the rest of this file.
 	play := playByID("sweep")
 	def := defByID("base")
 	shell := playbook.ShellByID(playbook.ShellCover2)
@@ -178,7 +188,7 @@ func TestSweepVsBaseCover2IsNotAHouseCall(t *testing.T) {
 			stuffed++
 		}
 	}
-	if house > 10 {
+	if house > 5 {
 		t.Fatalf("sweep vs base+cover2 still a house call: %d/%d were 20+", house, n)
 	}
 	if stuffed < 5 {

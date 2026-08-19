@@ -49,7 +49,8 @@ Put the printed `*.workers.dev` URL in `web/config.js` as `TECMO_PLAYCOUNT_URL` 
 | **1–4** | Select slot: **1** inside · **2** outside · **3** quick (slant) · **4** shot (post) |
 | **Shift+3** | Cycle quick game (**hitch**) — the HUD name is what snaps |
 | **Shift+4** | Cycle shot: **PA Post** · **PA Glance** (fake inside zone; glance sits over the Mike) |
-| **Space** | Snap · on passes, **throw** to primary (green ring). On PA, Space during the mesh **buffers** until the fake finishes |
+| **Space** | Snap · on passes, **throw** to primary (green ring). On PA, Space during the mesh **buffers** until the fake finishes. After the whistle, **skip replay** |
+| *(after whistle)* | Last play loops at half speed; 1s hold on the pre-snap look. **Space** continues |
 | **↑ ↓ ← →** | Steer QB / ball carrier (**↑** = toward their end zone) |
 | **Shift** / **E** | Juke (burst + short tackle evade). On PA during the mesh, **aborts the fake** (no bite, no juke) |
 | **T** | Play-log summary (terminal) |

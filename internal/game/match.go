@@ -17,6 +17,7 @@ const (
 	PhasePreSnap Phase = iota
 	PhasePlaySelect
 	PhaseInPlay
+	PhaseReplay // last-play tape at half speed
 	PhaseDeadBall
 	PhaseScore
 	PhaseGameOver
